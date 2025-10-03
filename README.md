@@ -7,7 +7,7 @@ Including
 conda create -n metalora python==3.12
 conda activate metalora
 conda install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=12.1 -c pytorch -c nvidia
-pip install accelerate huggingface modelscope transformers datasets scikit-learn hydra-core 
+pip install accelerate huggingface modelscope transformers datasets scikit-learn hydra-core tensorboard
 ```
 
 Download Model

@@ -3,7 +3,7 @@
 run:
   seed: 42
   use_fp16: false              # set false to disable AMP, or use bf16 if you extend it
-  gradient_accumulation_steps: 1
+  gradient_accumulation_steps: 16
   device: cuda                # auto | cuda | cpu
 
 paths:
@@ -13,25 +13,25 @@ paths:
 data:
   max_length: 512
   train_batch_size: 4
-  eval_batch_size: 4
+  eval_batch_size: 8
   # Switch between "mock" and "hf" when you add a real dataset loader
-  source: "mock"
+  source: "transmla"
 
 optim:
   learning_rate: 0.1
   weight_decay: 0.01
-  num_epochs: 3
+  num_epochs: 1
   warmup_steps: 100
   grad_clip_norm: 0.0
 
 logging:
-  logging_steps: 10
+  logging_steps: 1
 
 eval:
-  eval_steps: 500
+  eval_steps: 6000
 
 save:
-  save_steps: 500
+  save_steps: 6000
   save_best: true
 
 # If you use a custom local module for LoRA-wrapped Qwen, keep it here.
@@ -49,7 +49,7 @@ metanetwork:
   type: "transformer"
   transformer_cfg:
     encoder_cfg:
-      d_model: 1024
+      d_model: 1024 # Fixed
       nhead: 16
       dim_feedforward: 2048
       dropout: 0
@@ -58,9 +58,8 @@ metanetwork:
       batch_first: True
       norm_first: False
       bias: True
-    num_layers: 2
-    output_bottleneck: 64
-    scale: 0.0
+    num_layers: 4 # Fixed
+    scale: 0.001
 
 hidden_size: -1
 num_layers: -1
