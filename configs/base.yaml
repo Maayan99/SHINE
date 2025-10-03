@@ -1,0 +1,67 @@
+# Default training configuration for fine-tuning Qwen-0.6B with a manual PyTorch loop.
+
+run:
+  seed: 42
+  use_fp16: false              # set false to disable AMP, or use bf16 if you extend it
+  gradient_accumulation_steps: 1
+  device: cuda                # auto | cuda | cpu
+
+paths:
+  model_path: "./models/Qwen3-0.6B"
+  output_dir: "qwen-finetuned"   # final save; checkpoints go under Hydra's run dir unless overridden
+
+data:
+  max_length: 512
+  train_batch_size: 4
+  eval_batch_size: 4
+  # Switch between "mock" and "hf" when you add a real dataset loader
+  source: "mock"
+
+optim:
+  learning_rate: 0.1
+  weight_decay: 0.01
+  num_epochs: 3
+  warmup_steps: 100
+  grad_clip_norm: 0.0
+
+logging:
+  logging_steps: 10
+
+eval:
+  eval_steps: 500
+
+save:
+  save_steps: 500
+  save_best: true
+
+# If you use a custom local module for LoRA-wrapped Qwen, keep it here.
+# Otherwise, replace with a transformers model import path and update train.py accordingly.
+model:
+  lora_r: 4
+  num_mem_token: 4
+  model_class_path: "LoraQwen.LoraQwen3ForCausalLM"   # module.ClassName
+  meta_model_class_path: "LoraQwen.LoraQwen3Model" # module.ClassName
+  config_class_path: "LoraQwen.Qwen3Config" # module.ClassName
+  tokenizer_from: "${paths.model_path}"
+  model_from: "${paths.model_path}"
+
+metanetwork:
+  type: "transformer"
+  transformer_cfg:
+    encoder_cfg:
+      d_model: 1024
+      nhead: 16
+      dim_feedforward: 2048
+      dropout: 0
+      activation: gelu
+      layer_norm_eps: 0.00001
+      batch_first: True
+      norm_first: False
+      bias: True
+    num_layers: 2
+    output_bottleneck: 64
+    scale: 0.0
+
+hidden_size: -1
+num_layers: -1
+num_mem_token: ${model.num_mem_token}

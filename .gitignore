@@ -1,0 +1,7 @@
+__pycache__
+.vscode
+checkpoints
+tmp.txt
+outputs
+data
+models
