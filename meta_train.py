@@ -337,7 +337,7 @@ def main(cfg: DictConfig):
                 memory_states = outputs.memory_states
                 loradict = metanetwork(memory_states)
                 new_outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels, loradict=loradict)
-                loss = new_outputs.loss / max(1, cfg.run.gradient_accumulation_steps)
+                loss = new_outputs.loss / max(1, cfg.run.gradient_accumulation_steps) #??????????????????????  all into metanetwork?
 
             writer.add_scalar("train/lr", lr_scheduler.get_last_lr()[0], global_step)
             
@@ -372,7 +372,7 @@ def main(cfg: DictConfig):
                     eval_metrics = evaluate(model, metamodel, metanetwork, val_loader, device, use_amp=cfg.run.use_fp16)
                     writer.add_scalar("eval/loss", eval_metrics["eval_loss"], global_step)
                     writer.add_scalar("eval/ppl", eval_metrics["perplexity"], global_step)
-                    logger.info(f"\n[Eval @ step {global_step}] loss={eval_metrics['eval_loss']:.4f} ppl={eval_metrics['perplexity']:.2f}")
+                    logger.info(f"[Eval @ step {global_step}] loss={eval_metrics['eval_loss']:.4f} ppl={eval_metrics['perplexity']:.2f}")
                                         
                     if cfg.save.save_best and eval_metrics["eval_loss"] < best_eval_loss:
                         best_eval_loss = eval_metrics["eval_loss"]
@@ -385,7 +385,7 @@ def main(cfg: DictConfig):
 
                 if cfg.save.save_steps and global_step % cfg.save.save_steps == 0:
                     ckpt_dir = os.path.join(ckpt_root, f"checkpoint-{global_step}")
-                    logger.info(f"\nSaving checkpoint to {ckpt_dir}")
+                    logger.info(f"Saving checkpoint to {ckpt_dir}")
                     save_checkpoint(
                         model, metanetwork, tokenizer, ckpt_dir, global_step,
                         extra_state={"global_step": global_step}

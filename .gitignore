@@ -3,5 +3,7 @@ __pycache__
 checkpoints
 tmp.txt
 outputs
-data
-models
+data/**
+models/**
+tensorboard
+nohup.out

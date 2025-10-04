@@ -12,7 +12,7 @@ paths:
 
 data:
   max_length: 512
-  train_batch_size: 4
+  train_batch_size: 2
   eval_batch_size: 8
   # Switch between "mock" and "hf" when you add a real dataset loader
   source: "transmla"
@@ -28,10 +28,10 @@ logging:
   logging_steps: 1
 
 eval:
-  eval_steps: 6000
+  eval_steps: 4000
 
 save:
-  save_steps: 6000
+  save_steps: 4000
   save_best: true
 
 # If you use a custom local module for LoRA-wrapped Qwen, keep it here.
