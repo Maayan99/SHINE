@@ -302,7 +302,7 @@ def main(cfg: DictConfig):
         },
         # mem_tokens are already part of metanetwork's parameters
     ]
-    optimizer = torch.optim.AdamW(grouped_params, lr=cfg.optim.learning_rate)
+
     optimizer, lr_scheduler, scaler = init_optimize(grouped_params, train_loader, cfg, device)
 
     # Training loop scaffolding

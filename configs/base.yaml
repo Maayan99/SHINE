@@ -30,10 +30,10 @@ logging:
   logging_steps: 1
 
 eval:
-  eval_steps: 2000
+  eval_steps: 10
 
 save:
-  save_steps: 2000
+  save_steps: 10
   save_best: true
 
 # If you use a custom local module for LoRA-wrapped Qwen, keep it here.
