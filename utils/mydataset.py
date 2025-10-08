@@ -48,6 +48,17 @@ class TextDataset(Dataset):
     def __getitem__(self, idx) -> Dict[str, Any]:
         return {"text": str(self.texts[idx])}
 
+class LoogleDataset(Dataset):
+    def __init__(self, data: List[Dict[str, Any]], tokenizer, max_length: int = 512):
+        self.data = data
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx) -> Dict[str, Any]:
+        return {"question": str(self.data[idx]['question']), "evidence": str(self.data[idx]['evidence']), "answer": str(self.data[idx]['answer'])}
 
 # ---------------------------
 # Collator with dynamic padding and label masking
@@ -80,4 +91,30 @@ class CausalLMDataCollator:
             "input_ids": input_ids,
             "attention_mask": attention_mask,
             "labels": labels,
+        }
+
+@dataclass
+class LoogleCollator:
+    tokenizer: Any
+    max_length: int = 512
+
+    def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+        questions = [ex["question"] for ex in batch]
+        evidences = [ex["evidence"] for ex in batch]
+        answers = [ex["answer"] for ex in batch]
+        inputs = [f"Please read the following text and answer the question.\nText:{e}\nQuestion:{q}\nAnswer:" for q, e in zip(questions, evidences)]
+           
+        enc = self.tokenizer(
+            inputs,
+            truncation=True,
+            padding=True,
+            max_length=self.max_length,
+            return_tensors="pt",
+        )
+        input_ids = enc["input_ids"]
+        attention_mask = enc["attention_mask"]
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "answers": answers,
         }

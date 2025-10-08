@@ -1,5 +1,5 @@
 # Not ready yet
-# resume_global_step: 20  # -1: don't resume,   int: resume from global steps,  latest: resume from latest
+resume_global_step: latest  # -1: don't resume,   int: resume from global steps,  latest: resume from latest
 
 run:
   seed: 42
@@ -63,12 +63,18 @@ metanetwork:
     num_layers: 4 # Fixed
     scale: 0.001
 
+test:
+  source: loogle
+  max_new_tokens: 1024
+  save_path: test
+  batch_size: 8
+
 hydra:
   job:
     chdir: false
   run:
     # everyone uses the SAME dir
-    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    dir: outputs/${now:%H-%M-%S}
   output_subdir: null  # avoid multiple `.hydra` subdirs trying to coexist
 
 hidden_size: -1

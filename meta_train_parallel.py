@@ -54,68 +54,37 @@ from utils.mysaveload import (
 )
 from utils.myfreeze import freeze
 from utils.myoptmize import init_optimize
+from utils.myddp import (
+    should_use_ddp,
+    ddp_is_active,
+    get_world_size,
+    get_rank,
+    get_local_rank,
+    is_main_process,
+    ddp_init_if_needed,
+    ddp_cleanup_if_needed,
+    distributed_mean,
+    barrier,
+)
+from utils.myinit import _resolve_device, _import_class
 
 from collections import OrderedDict
 
 logger = get_logger("metalora")
 
-# ========= DDP helpers =========
-def should_use_ddp() -> bool:
-    # If launched with torchrun, WORLD_SIZE will be set (>1 for multi-proc)
-    return int(os.environ.get("WORLD_SIZE", "1")) > 1
-
-def ddp_is_active() -> bool:
-    return dist.is_available() and dist.is_initialized()
-
-def get_world_size() -> int:
-    return dist.get_world_size() if ddp_is_active() else 1
-
-def get_rank() -> int:
-    return dist.get_rank() if ddp_is_active() else 0
-
-def get_local_rank() -> int:
-    # torchrun sets LOCAL_RANK; default to 0 for single GPU/CPU
-    return int(os.environ.get("LOCAL_RANK", "0"))
-
-def is_main_process() -> bool:
-    return get_rank() == 0
-
-def ddp_init_if_needed():
-    # Only initialize if we're truly in a multi-process setting
-    if should_use_ddp() and dist.is_available() and not dist.is_initialized():
-        backend = "nccl" if torch.cuda.is_available() else "gloo"
-        dist.init_process_group(backend=backend, init_method="env://")
-        # Make printing on non-zero ranks quieter
-        if not is_main_process():
-            import builtins as __builtin__
-            def _silent_print(*args, **kwargs):
-                pass
-            __builtin__.print = _silent_print
-
-def ddp_cleanup_if_needed():
-    if ddp_is_active():
-        dist.barrier()
-        dist.destroy_process_group()
 
 @torch.no_grad()
-def distributed_mean(value: float, device: torch.device) -> float:
-    """Average a scalar across processes."""
-    if not ddp_is_active():
-        return value
-    t = torch.tensor([value], dtype=torch.float32, device=device)
-    dist.all_reduce(t, op=dist.ReduceOp.SUM)
-    t /= get_world_size()
-    return float(t.item())
-# ==============================
-
-
-@torch.no_grad()
-def evaluate(model, metanetwork_ddp_or_module, dataloader, device, use_amp: bool = True) -> Dict[str, float]:
+def evaluate(model, metanetwork_ddp_or_module, dataloader, device, use_amp: bool = False) -> Dict[str, float]:
     # Handle both wrapped and unwrapped metanetwork
-    metanet = metanetwork_ddp_or_module.module if isinstance(metanetwork_ddp_or_module, DDP) else metanetwork_ddp_or_module
+    if metanetwork_ddp_or_module is None:
+        use_metanet = False
+    else:
+        use_metanet = True
+        metanet = metanetwork_ddp_or_module.module if isinstance(metanetwork_ddp_or_module, DDP) else metanetwork_ddp_or_module
 
     model.eval()
-    metanet.eval()
+    if use_metanet:
+        metanet.eval()
     total_loss = 0.0
     n_tokens = 0
     if use_amp and device.type == "cuda":
@@ -130,9 +99,13 @@ def evaluate(model, metanetwork_ddp_or_module, dataloader, device, use_amp: bool
         labels = batch["labels"].to(device, non_blocking=True)
 
         with scaler_ctx():
-            loradict = metanet(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-            new_outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels, loradict=loradict)
-            loss = new_outputs.loss
+            if use_metanet:
+                loradict = metanet(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+                new_outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels, loradict=loradict)
+                loss = new_outputs.loss
+            else:
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+                loss = outputs.loss
 
         valid_tokens = (labels != -100).sum().item()
         total_loss += loss.item() * valid_tokens
@@ -148,33 +121,9 @@ def evaluate(model, metanetwork_ddp_or_module, dataloader, device, use_amp: bool
     avg_loss = total_loss / max(n_tokens, 1)
     ppl = math.exp(avg_loss) if avg_loss < 20 else float("inf")
     model.train()
-    metanet.train()
+    if use_metanet:
+        metanet.train()
     return {"eval_loss": avg_loss, "perplexity": ppl}
-
-
-def _resolve_device(device_cfg: str) -> torch.device:
-    # In DDP we hard-bind to LOCAL_RANK cuda device when available.
-    if device_cfg == "auto":
-        if torch.cuda.is_available():
-            local_rank = get_local_rank()
-            torch.cuda.set_device(local_rank)
-            return torch.device(f"cuda:{local_rank}")
-        return torch.device("cpu")
-    if device_cfg in ("cuda", "cpu"):
-        if device_cfg == "cuda" and torch.cuda.is_available():
-            local_rank = get_local_rank()
-            torch.cuda.set_device(local_rank)
-            return torch.device(f"cuda:{local_rank}")
-        return torch.device(device_cfg)
-    raise ValueError(f"Unsupported device setting: {device_cfg}")
-
-
-def _import_class(path: str):
-    if "." not in path:
-        raise ValueError("model.class_path must be 'module.ClassName'")
-    mod_name, cls_name = path.rsplit(".", 1)
-    mod = importlib.import_module(mod_name)
-    return getattr(mod, cls_name)
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="base")
@@ -191,7 +140,7 @@ def main(cfg: DictConfig):
     set_seed(int(cfg.run.seed) + get_rank())
     device = _resolve_device(cfg.run.device)
     torch.backends.cudnn.benchmark = True
-
+    
     # Load model/tokenizer (supports your local LoRA-wrapped Qwen class)
     if is_main_process():
         logger.info("Loading model & tokenizer...")
@@ -223,6 +172,29 @@ def main(cfg: DictConfig):
     metanetwork.train()
     metanetwork.to(device)
     freeze(model, metamodel)  # base model frozen; metanetwork has trainable params
+    
+    # Training loop scaffolding
+    hydra_run_dir = os.getcwd()
+    ckpt_root = os.path.join(hydra_run_dir, "checkpoints")
+    os.makedirs(ckpt_root, exist_ok=True)
+    if cfg.resume_global_step == -1:
+        resume_dir = None
+    elif cfg.resume_global_step == "latest":
+        resume_dir = get_latest_checkpoint(ckpt_root)
+    elif isinstance(cfg.resume_global_step, int) and cfg.resume_global_step > 0:
+        resume_dir = os.path.join(ckpt_root, f"checkpoint-{cfg.resume_global_step}")
+        if not os.path.isdir(resume_dir):
+            raise ValueError(f"Requested resume dir {resume_dir} does not exist.")
+    else:
+        raise ValueError(f"Invalid resume_global_step: {cfg.resume_global_step}")
+    
+    resume_state = None
+    if resume_dir is not None:
+        # Load model & tokenizer
+        if is_main_process():
+            logger.info(f"Resume mode, loading from {resume_dir}...")
+        model, metanetwork, tokenizer = load_checkpoint(model, metanetwork, tokenizer, resume_dir, device)
+        resume_state = load_training_state(resume_dir)
 
     # ====== Wrap ONLY the trainable module in DDP when applicable ======
     if should_use_ddp():
@@ -236,6 +208,22 @@ def main(cfg: DictConfig):
     else:
         ddp_metanet = metanetwork  # no wrapping in single-process run
 
+    # Optimizer & Scheduler
+    if is_main_process():
+        logger.info("Setting up optimizer & scheduler...")
+    no_decay = ["bias", "LayerNorm.weight", "layer_norm.weight", "norm.weight", "norm1", "norm2"]
+    grouped_params = [
+        {
+            "params": [p for n, p in ddp_metanet.named_parameters() if (not any(nd in n for nd in no_decay) and not n.startswith("module.metamodel"))],
+            "weight_decay": cfg.optim.weight_decay,
+        },
+        {
+            "params": [p for n, p in ddp_metanet.named_parameters() if (any(nd in n for nd in no_decay) and not n.startswith("module.metamodel"))],
+            "weight_decay": 0.0,
+        },
+        # mem_tokens are already part of metanetwork's parameters
+    ]  
+    
     # Data
     if is_main_process():
         logger.info("Preparing data...")
@@ -249,6 +237,10 @@ def main(cfg: DictConfig):
         if is_main_process():
             logger.info(f"Train len: {len(train_texts)}")
             logger.info(f"Val len: {len(val_texts)}")
+    elif cfg.data.source == "loogle":
+        datasets = ["shortdep_qa", "shortdep_cloze", "longdep_qa", "summarization"]
+        for testset in datasets:
+            data = load_dataset('bigai-nlco/LooGLE', testset, split='test', cache_dir=os.path.join('data', 'loogle', testset))
     else:
         raise ValueError(f"Unknown data source: {cfg.data.source}")
 
@@ -260,7 +252,7 @@ def main(cfg: DictConfig):
     pin = (device.type == "cuda")
 
     # Distributed samplers (only if world_size > 1)
-    train_sampler = DistributedSampler(train_ds, num_replicas=get_world_size(), rank=get_rank(), shuffle=True) if get_world_size() > 1 else None
+    train_sampler = DistributedSampler(train_ds, num_replicas=get_world_size(), rank=get_rank(), shuffle=True, seed=cfg.run.seed) if get_world_size() > 1 else None
     val_sampler = DistributedSampler(val_ds, num_replicas=get_world_size(), rank=get_rank(), shuffle=False) if get_world_size() > 1 else None
 
     # Use a few workers by default when on GPU
@@ -269,7 +261,7 @@ def main(cfg: DictConfig):
     train_loader = DataLoader(
         train_ds,
         batch_size=cfg.data.train_batch_size,
-        shuffle=(train_sampler is None),
+        shuffle=False,
         sampler=train_sampler,
         collate_fn=collator,
         pin_memory=pin,
@@ -287,26 +279,8 @@ def main(cfg: DictConfig):
         persistent_workers=pin and getattr(cfg.data, "num_workers", num_workers_default) > 0,
     )
 
-    # Optimizer & Scheduler
-    if is_main_process():
-        logger.info("Setting up optimizer & scheduler...")
-    no_decay = ["bias", "LayerNorm.weight", "layer_norm.weight", "norm.weight", "norm1", "norm2"]
-    grouped_params = [
-        {
-            "params": [p for n, p in ddp_metanet.named_parameters() if (not any(nd in n for nd in no_decay) and not n.startswith("module.metamodel"))],
-            "weight_decay": cfg.optim.weight_decay,
-        },
-        {
-            "params": [p for n, p in ddp_metanet.named_parameters() if (any(nd in n for nd in no_decay) and not n.startswith("module.metamodel"))],
-            "weight_decay": 0.0,
-        },
-        # mem_tokens are already part of metanetwork's parameters
-    ]
-
+    
     optimizer, lr_scheduler, scaler = init_optimize(grouped_params, train_loader, cfg, device)
-
-    # Training loop scaffolding
-    hydra_run_dir = os.getcwd()
 
     # Only main process writes TB logs
     tb_log_dir = os.path.join(hydra_run_dir, "tensorboard")
@@ -326,22 +300,38 @@ def main(cfg: DictConfig):
 
     global_step = 0
     best_eval_loss = float("inf")
+    start_epoch = 0
+    start_step_in_epoch = 0
+    if resume_state is not None:
+        global_step = resume_state["global_step"]
+        best_eval_loss = resume_state["best_eval_loss"]
+        start_epoch = resume_state["epoch"]
+        start_step_in_epoch = resume_state["step_in_epoch"]
 
-    def one_train_epoch(epoch):
+    def one_train_epoch(epoch, start_epoch=1, start_step_in_epoch=0):
         nonlocal global_step, best_eval_loss
         epoch_loss = 0.0
         epoch_tokens = 0
         tmp_loss = 0.0
         tmp_tokens = 0
-
+        # need to change
         if isinstance(train_loader.sampler, DistributedSampler):
             train_loader.sampler.set_epoch(epoch)
+        
+        if epoch < start_epoch:
+            for step, batch in enumerate(train_loader, start=1):
+                if step % max(1, cfg.run.gradient_accumulation_steps) == 0:
+                    lr_scheduler.step()
+            return 
 
         pbar = train_loader
         if is_main_process():
             pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{cfg.optim.num_epochs}")
 
         for step, batch in enumerate(pbar, start=1):
+            if epoch == start_epoch and step <= start_step_in_epoch:
+                lr_scheduler.step()
+                continue
             input_ids = batch["input_ids"].to(device, non_blocking=True)
             attention_mask = batch["attention_mask"].to(device, non_blocking=True)
             labels = batch["labels"].to(device, non_blocking=True)
@@ -414,6 +404,13 @@ def main(cfg: DictConfig):
                             ckpt_dir,
                             extra_state={"global_step": global_step},
                         )
+                        save_training_state(
+                            ckpt_dir,
+                            global_step,
+                            epoch,
+                            step,
+                            best_eval_loss,
+                        )
                     if ddp_is_active():
                         dist.barrier()
 
@@ -438,6 +435,13 @@ def main(cfg: DictConfig):
                                 tokenizer,
                                 best_dir,
                                 extra_state={"global_step": global_step, "best_eval_loss": best_eval_loss},
+                            )
+                            save_training_state(
+                                best_dir,
+                                global_step,
+                                epoch,
+                                step,
+                                best_eval_loss,
                             )
                     if ddp_is_active():
                         dist.barrier()
@@ -468,10 +472,20 @@ def main(cfg: DictConfig):
                     best_dir,
                     extra_state={"global_step": global_step, "best_eval_loss": best_eval_loss},
                 )
+                save_training_state(
+                    best_dir,
+                    global_step,
+                    epoch,
+                    step,
+                    best_eval_loss,
+                )
         if ddp_is_active():
             dist.barrier()
 
     # Initial eval
+    init_eval_without_metanetwork = evaluate(model, None, val_loader, device, use_amp=cfg.run.use_fp16)
+    if is_main_process():
+        logger.info(f"[without lora] loss={init_eval_without_metanetwork['eval_loss']:.4f} ppl={init_eval_without_metanetwork['perplexity']:.2f}")
     init_eval = evaluate(model, ddp_metanet, val_loader, device, use_amp=cfg.run.use_fp16)
     if writer is not None:
         writer.add_scalar("eval/loss", init_eval["eval_loss"], global_step)
@@ -481,7 +495,7 @@ def main(cfg: DictConfig):
 
     # Main training epochs
     for epoch in range(1, cfg.optim.num_epochs + 1):
-        one_train_epoch(epoch)
+        one_train_epoch(epoch, start_epoch, start_step_in_epoch)
 
     # Final save (rank 0 only)
     if is_main_process():

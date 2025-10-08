@@ -21,13 +21,13 @@ def save_checkpoint(model, metanetwork, tokenizer, out_dir: str, extra_state: Di
         with open(os.path.join(out_dir, "trainer_state.json"), "w", encoding="utf-8") as f:
             json.dump(extra_state, f, ensure_ascii=False, indent=2)
 
-def load_checkpoint(model, metanetwork, tokenizer, in_dir: str):
+def load_checkpoint(model, metanetwork, tokenizer, in_dir: str, device: str):
     model = model.__class__.from_pretrained(os.path.join(in_dir, "model"))
     metanetwork.metamodel = metanetwork.metamodel.__class__.from_pretrained(os.path.join(in_dir, "metamodel"))
     metanetwork.metanetwork.load_state_dict(torch.load(os.path.join(in_dir, "metanetwork.pth"), weights_only=False))
     tokenizer = tokenizer.__class__.from_pretrained(os.path.join(in_dir, "tokenizer"))
     freeze(model, metanetwork.metamodel)
-    return model, metanetwork, tokenizer
+    return model.to(device), metanetwork.to(device), tokenizer
 
 def _rng_state_dict():
     state = {
@@ -52,60 +52,35 @@ def _set_rng_state(state: Dict[str, Any]):
 
 def save_training_state(
     out_dir: str,
-    optimizer: torch.optim.Optimizer,
-    lr_scheduler,
-    scaler: torch.amp.GradScaler,
     global_step: int,
     epoch: int,
     step_in_epoch: int,
     best_eval_loss: float,
-    cfg: DictConfig,
-    dataloader: DataLoader = None,  # <-- NEW
 ):
     os.makedirs(os.path.join(out_dir, "trainer_state"), exist_ok=True)
     payload = {
-        "optimizer": optimizer.state_dict(),
-        "lr_scheduler": lr_scheduler.state_dict() if hasattr(lr_scheduler, "state_dict") else None,
-        "scaler": scaler.state_dict() if scaler is not None else None,
         "global_step": global_step,
         "epoch": epoch,
         "step_in_epoch": step_in_epoch,
         "best_eval_loss": best_eval_loss,
         "rng_state": _rng_state_dict(),
-        "cfg": OmegaConf.to_container(cfg, resolve=True),
-        # NEW: dataloader generator state (if provided)
-        "dataloader": dataloader
     }
     torch.save(payload, os.path.join(out_dir, "trainer_state", "trainer_state.pt"))
 
 def load_training_state(
     in_dir: str,
-    optimizer: torch.optim.Optimizer,
-    lr_scheduler,
-    scaler: torch.amp.GradScaler,
 ):
     path = os.path.join(in_dir, "trainer_state", "trainer_state.pt")
     if not os.path.isfile(path):
         return None
     payload = torch.load(path, map_location="cpu", weights_only=False)
-    if payload.get("optimizer") is not None:
-        optimizer.load_state_dict(payload["optimizer"])
-    if payload.get("lr_scheduler") is not None and hasattr(lr_scheduler, "load_state_dict"):
-        lr_scheduler.load_state_dict(payload["lr_scheduler"])
-    if payload.get("scaler") is not None and scaler is not None:
-        scaler.load_state_dict(payload["scaler"])
     _set_rng_state(payload.get("rng_state"))
-    if payload.get("dataloader") is not None:
-        dataloader = payload.get("dataloader")  
-    else:
-        dataloader = None
 
     return {
         "global_step": payload.get("global_step", 0),
         "epoch": payload.get("epoch", 1),
         "step_in_epoch": payload.get("step_in_epoch", 0),
         "best_eval_loss": payload.get("best_eval_loss", float("inf")),
-        "dataloader": dataloader  # <-- NEW
     }
 
 
