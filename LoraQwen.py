@@ -32,15 +32,17 @@ class LoraLinear(nn.Linear):
     def __init__(self, in_features, out_features, bias = True, device=None, dtype=None):
         super().__init__(in_features, out_features, bias, device, dtype)
 
-    def forward(self, input: Tensor, lora_dict = None) -> Tensor:          
+    def forward(self, input: Tensor, lora_dict = None) -> Tensor: 
         if lora_dict is None:
             return F.linear(input, self.weight, self.bias)
         else:
+            assert input.shape[0] % lora_dict["A"].shape[0] == 0, f"input batch size {input.shape[0]} must be multiple of lora_dict['A'] batch size {lora_dict['A'].shape[0]}"
+            num_beams = input.shape[0] // lora_dict["A"].shape[0]
             if self.bias is None:
                 assert lora_dict.get("C") is None, "If bias is None, lora_dict['C'] must also be None"
             else:
                 assert lora_dict.get("C") is not None, "If bias is not None, lora_dict['C'] must also be not None"
-            return F.linear(input, self.weight, self.bias) + torch.bmm(torch.bmm(input, lora_dict["A"]), lora_dict["B"]) + (lora_dict["C"].unsqueeze(1) if self.bias is not None else 0)
+            return F.linear(input, self.weight, self.bias) + torch.bmm(torch.bmm(input, lora_dict["A"].repeat_interleave(num_beams, dim=0)), lora_dict["B"].repeat_interleave(num_beams, dim=0)) + (lora_dict["C"].unsqueeze(1).repeat_interleave(num_beams, dim=0) if self.bias is not None else 0)
     
     def lora_params_numel(self, r):
         if not hasattr(self, "lora_params_numel_cache"):
@@ -425,6 +427,8 @@ class LoraQwen3Model(Qwen3PreTrainedModel):
             if self.use_mem_token:
                 memory_states[:, i, :, :] = hidden_states[:, -self.num_mem_token:].to(self.device)
 
+        if self.use_mem_token:
+            hidden_states = hidden_states[:, :-self.num_mem_token, :]
         hidden_states = self.norm(hidden_states)
         return MemoryModelOutputWithPast(
             last_hidden_state=hidden_states,

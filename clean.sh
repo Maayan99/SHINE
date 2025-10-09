@@ -1,1 +1,1 @@
-rm -rf outputs checkpoints tensorboard qwen-finetuned
+rm -rf outputs tensorboard qwen-finetuned

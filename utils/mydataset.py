@@ -97,24 +97,49 @@ class CausalLMDataCollator:
 class LoogleCollator:
     tokenizer: Any
     max_length: int = 512
+    PROMPT_TEMPLATE: str = "Context: {evidence}\nQuestion: {question}\nAnswer: {answer}"
 
     def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
         questions = [ex["question"] for ex in batch]
         evidences = [ex["evidence"] for ex in batch]
         answers = [ex["answer"] for ex in batch]
-        inputs = [f"Please read the following text and answer the question.\nText:{e}\nQuestion:{q}\nAnswer:" for q, e in zip(questions, evidences)]
            
         enc = self.tokenizer(
-            inputs,
+            evidences,
             truncation=True,
             padding=True,
             max_length=self.max_length,
             return_tensors="pt",
         )
-        input_ids = enc["input_ids"]
-        attention_mask = enc["attention_mask"]
+        evidence_ids = enc["input_ids"]
+        evidence_attention_mask = enc["attention_mask"]
+        enc = self.tokenizer(
+            questions,
+            truncation=True,
+            padding=True,
+            max_length=self.max_length,
+            return_tensors="pt",
+        )
+        question_ids = enc["input_ids"]
+        question_attention_mask = enc["attention_mask"]
+
+        prompt = [self.PROMPT_TEMPLATE.format(evidence=e, question=q, answer="") for e, q in zip(evidences, questions)]
+        enc = self.tokenizer(
+            prompt,
+            truncation=True,
+            padding=True,
+            max_length=self.max_length,
+            return_tensors="pt",
+        )
+        prompt_ids = enc["input_ids"]
+        prompt_attention_mask = enc["attention_mask"]
         return {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
+            "evidence": evidences,
+            "evidence_ids": evidence_ids,
+            "evidence_attention_mask": evidence_attention_mask,
+            "question_ids": question_ids,
+            "question_attention_mask": question_attention_mask,
+            "prompt_ids": prompt_ids,
+            "prompt_attention_mask": prompt_attention_mask,
             "answers": answers,
         }

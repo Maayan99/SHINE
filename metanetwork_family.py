@@ -68,7 +68,7 @@ class Metanetwork(nn.Module):
         else:
             raise ValueError(f"Unknown metanetwork type: {cfg.metanetwork.type}")
 
-    def forward(self, input_ids, attention_mask, labels) -> dict:
+    def forward(self, input_ids, attention_mask, labels = None) -> dict:
         '''
         memory_states: (batch_size, num_layer, num_mem_token, hidden_size)
         '''

@@ -8,6 +8,7 @@ from omegaconf import DictConfig, OmegaConf
 from utils.mylogging import get_logger
 from utils.myfreeze import freeze
 from torch.utils.data import DataLoader
+import time
 
 logger = get_logger("save & load")
 
@@ -21,13 +22,16 @@ def save_checkpoint(model, metanetwork, tokenizer, out_dir: str, extra_state: Di
         with open(os.path.join(out_dir, "trainer_state.json"), "w", encoding="utf-8") as f:
             json.dump(extra_state, f, ensure_ascii=False, indent=2)
 
-def load_checkpoint(model, metanetwork, tokenizer, in_dir: str, device: str):
+def load_checkpoint(model, metanetwork, tokenizer, in_dir, device: str):
     model = model.__class__.from_pretrained(os.path.join(in_dir, "model"))
+    model.to(device)
+    metanetwork.to("cpu")
     metanetwork.metamodel = metanetwork.metamodel.__class__.from_pretrained(os.path.join(in_dir, "metamodel"))
-    metanetwork.metanetwork.load_state_dict(torch.load(os.path.join(in_dir, "metanetwork.pth"), weights_only=False))
+    metanetwork.metanetwork.load_state_dict(torch.load(os.path.join(in_dir, "metanetwork.pth"), weights_only=False, map_location="cpu"))
+    metanetwork.to(device)
     tokenizer = tokenizer.__class__.from_pretrained(os.path.join(in_dir, "tokenizer"))
     freeze(model, metanetwork.metamodel)
-    return model.to(device), metanetwork.to(device), tokenizer
+    return model, metanetwork, tokenizer
 
 def _rng_state_dict():
     state = {

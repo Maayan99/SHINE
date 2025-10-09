@@ -68,12 +68,13 @@ from utils.myddp import (
 )
 from utils.myinit import _resolve_device, _import_class
 from collections import OrderedDict
+import time
 
 logger = get_logger("test")
 
 
 @torch.no_grad()
-def test(cfg, model, metanetwork_ddp_or_module, tokenizer, testloader, save_path, device, use_amp: bool = False) -> Dict[str, float]:
+def test(cfg, model, metanetwork_ddp_or_module, tokenizer, testloader, use_amp: bool = False, device: torch.device = 'cuda') -> Dict[str, float]:
     # Handle both wrapped and unwrapped metanetwork
     if metanetwork_ddp_or_module is None:
         use_metanet = False
@@ -91,61 +92,73 @@ def test(cfg, model, metanetwork_ddp_or_module, tokenizer, testloader, save_path
         scaler_ctx = nullcontext
     
     results = []
-    gen_kwargs = {
-        "max_new_tokens": cfg.test.max_new_tokens,
-        "do_sample": False,
-        "pad_token_id": getattr(tokenizer, "pad_token_id", None) or tokenizer.eos_token_id,
-    }
+    # gen_kwargs = {
+    #     "max_new_tokens": cfg.test.max_new_tokens,
+    #     "do_sample": False,
+    #     "pad_token_id": getattr(tokenizer, "pad_token_id", None) or tokenizer.eos_token_id,
+    #     "num_beams": 4,
+    #     "length_penalty": 2.0,
+    #     "no_repeat_ngram_size": 3,
+    #     "early_stopping": True,
+    # }
 
     for batch_idx, batch in enumerate(testloader):
-        input_ids = batch["input_ids"].to(device, non_blocking=True)
-        attention_mask = batch["attention_mask"].to(device, non_blocking=True)
-        ground_truths = batch["answers"].to(device, non_blocking=True)
+        evidences = batch["evidence"]
+        evidence_ids = batch["evidence_ids"].to(device, non_blocking=True)
+        evidence_attention_mask = batch["evidence_attention_mask"].to(device, non_blocking=True)
+        # question_ids = batch["question_ids"].to(device, non_blocking=True)
+        # question_attention_mask = batch["question_attention_mask"].to(device, non_blocking=True)
+        prompt_ids = batch["prompt_ids"].to(device, non_blocking=True)
+        prompt_attention_mask = batch["prompt_attention_mask"].to(device, non_blocking=True)
+        ground_truths = batch["answers"]
 
         with scaler_ctx():
             if use_metanet:
                 # Produce LoRA dict from the MetaNetwork
-                loradict = metanet(input_ids=input_ids, attention_mask=attention_mask)
+                loradict = metanet(input_ids=evidence_ids, attention_mask=evidence_attention_mask)
                 gen_out = model.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
+                    input_ids=prompt_ids,
+                    attention_mask=prompt_attention_mask,
                     loradict=loradict,
-                    **gen_kwargs,
+                    # **gen_kwargs,
                 )
+                input_lens = prompt_attention_mask.sum(dim=1).tolist()
+                input_ids = prompt_ids
             else:
                 gen_out = model.generate(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    **gen_kwargs,
+                    input_ids=prompt_ids,
+                    attention_mask=prompt_attention_mask,
+                    # **gen_kwargs,
                 )
+                input_lens = prompt_attention_mask.sum(dim=1).tolist()
+                input_ids = prompt_ids
 
         # Decode per item: strip the prompt portion to keep only the generated continuation
-        input_lens = attention_mask.sum(dim=1).tolist()
         gen_out = gen_out.to("cpu")
         input_ids_cpu = input_ids.to("cpu")
 
         for i in range(gen_out.size(0)):
             full_text = tokenizer.decode(gen_out[i], skip_special_tokens=True)
-            prompt_text = tokenizer.decode(input_ids_cpu[i][: input_lens[i]], skip_special_tokens=True)
-
+            input_text = tokenizer.decode(input_ids_cpu[i][-input_lens[i] :], skip_special_tokens=True)
             # Keep only the continuation after the prompt (best-effort split)
-            if full_text.startswith(prompt_text):
-                answer_text = full_text[len(prompt_text):].strip()
+            if full_text.startswith(input_text):
+                answer_text = full_text[len(input_text):].strip()
             else:
                 # Fallback if tokenization/spacing prevents a clean prefix match
                 answer_text = full_text
 
             results.append({
-                "prompt": prompt_text,
-                "prediction": answer_text,
-                "ground_truth": tokenizer.decode(ground_truths[i], skip_special_tokens=True),
+                "evidence": evidences[i],
+                "input": input_text,
+                "answer": answer_text,
+                "ground_truth": ground_truths[i],
             })
+        
+    return results
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="base")
-def main(cfg: DictConfig):
-    cfg.name = "test"
-    
+def main(cfg: DictConfig):  
     # ========= DDP init (safe for single-process) =========
     ddp_init_if_needed()
 
@@ -171,7 +184,6 @@ def main(cfg: DictConfig):
     cfg.num_layers = config.num_hidden_layers
     model = ModelCls.from_pretrained(cfg.model.model_from, config=config)
     model.train()
-    model.to(device)
 
     if cfg.metanetwork.type == "transformer":
         assert model.lora_params_numel(cfg.model.lora_r) % (cfg.hidden_size * cfg.num_layers) == 0, \
@@ -185,10 +197,9 @@ def main(cfg: DictConfig):
 
     metamodel = MetaModelCls.from_pretrained(cfg.model.model_from, config=config)
     metamodel.reset_mem_tokens()
-    tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_from)
+    tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_from, padding_side="left")
     metanetwork = Metanetwork(metamodel, cfg, model.lora_params_numel(cfg.model.lora_r))
     metanetwork.train()
-    metanetwork.to(device)
     freeze(model, metamodel)  # base model frozen; metanetwork has trainable params
     
     # Training loop scaffolding
@@ -206,28 +217,15 @@ def main(cfg: DictConfig):
     # Load model & tokenizer
     if is_main_process():
         logger.info(f"Resume mode, loading from {resume_dir}...")
-    model, metanetwork, tokenizer = load_checkpoint(model, metanetwork, tokenizer, resume_dir, device)
-    resume_state = load_training_state(resume_dir)
+    model, metanetwork, _ = load_checkpoint(model, metanetwork, tokenizer, resume_dir, device)
 
-    # ====== Wrap ONLY the trainable module in DDP when applicable ======
-    if should_use_ddp():
-        ddp_metanet = DDP(
-            metanetwork,
-            device_ids=[device.index] if device.type == "cuda" else None,
-            output_device=device.index if device.type == "cuda" else None,
-            find_unused_parameters=False,
-            broadcast_buffers=False,
-        )
-    else:
-        ddp_metanet = metanetwork  # no wrapping in single-process run
-
-    
     # Data
     if is_main_process():
         logger.info("Preparing data...")
     if cfg.test.source == "loogle":
         # 1) Main process downloads
-        names = ["shortdep_qa", "shortdep_cloze", "longdep_qa", "summarization"]
+        # names = ["shortdep_qa", "shortdep_cloze", "longdep_qa", "summarization"]
+        names = ["shortdep_qa", "shortdep_cloze", "longdep_qa"]
         if ddp_is_active() and is_main_process():
             logger.info("Preparing data (downloading to cache if needed)...")
             for testset in names:
@@ -248,14 +246,53 @@ def main(cfg: DictConfig):
                 testset,
                 split="test",
                 cache_dir=os.path.join('data', 'loogle', testset),
-                local_files_only=True,
             )
             datasets.append(LoogleDataset(data, tokenizer, max_length=cfg.data.max_length))
             if is_main_process():
                 logger.info(f"Loaded loogle/{testset} with {len(data)} samples")
-        collator = LoogleCollator(tokenizer=tokenizer, max_length=cfg.data.max_length)
+
+        PROMPT_TEMPLATE = " Please answer the question as short as you can. {question}"
+        PROMPT_TEMPLATE_NO_METANETWORK = "You know that \"{evidence}\" Please answer the question as short as you can \"{question}\""
+        collator = LoogleCollator(tokenizer=tokenizer, max_length=cfg.data.max_length, PROMPT_TEMPLATE=PROMPT_TEMPLATE)
+        collator_no_metanet = LoogleCollator(tokenizer=tokenizer, max_length=cfg.data.max_length, PROMPT_TEMPLATE=PROMPT_TEMPLATE_NO_METANETWORK)
+    elif cfg.test.source == "easy":
+        names = ["0"]
+        for testset in names:
+            texts = [
+                "What does lewis eat every evening ?",
+                "What does lewis eat every morning ?",
+                "What is most expensive in Beijing ?",
+                "Why Jack refuse to see Alice ?",
+                "Does Jack love Alice ?",
+                "What's the meaning when I say I don't like it ?",
+            ]
+            answers = [
+                "Rice",
+                "Dumplings",
+                "Housing prices",
+                "Because he hates her",
+                "No",
+                "I hate it very much",
+            ]
+            evidences = [
+                "Lewis eats dumplings every morning and rice every evening.",
+                "Lewis eats dumplings every morning and rice every evening.",
+                "The most expensive thing in Beijing is housing prices.",
+                "Jack refuse to see Alice because he hates her.",
+                "Jack refuse to see Alice because he hates her.",
+                "When I say I don't like it I mean I hate it very much."
+            ]
+            data = [{"question": q, "evidence": e, "answer": a} for q, e, a in zip(texts, evidences, answers)]
+            datasets = [LoogleDataset(data, tokenizer, max_length=cfg.data.max_length)]
+            if is_main_process():
+                logger.info(f"Loaded easy testset with {len(data)} samples")    
+            
+            PROMPT_TEMPLATE = " Please answer the question as short as you can. {question}"
+            PROMPT_TEMPLATE_NO_METANETWORK = "You know that \"{evidence}\" Please answer the question as short as you can \"{question}\""
+            collator = LoogleCollator(tokenizer=tokenizer, max_length=cfg.data.max_length, PROMPT_TEMPLATE=PROMPT_TEMPLATE)
+            collator_no_metanet = LoogleCollator(tokenizer=tokenizer, max_length=cfg.data.max_length, PROMPT_TEMPLATE=PROMPT_TEMPLATE_NO_METANETWORK)
     else:
-        raise ValueError(f"Unknown data source: {cfg.data.source}")
+        raise ValueError(f"Unknown data source: {cfg.test.source}")
 
     
 
@@ -272,8 +309,18 @@ def main(cfg: DictConfig):
             sampler=test_sampler,
             collate_fn=collator,
             pin_memory=pin,
-            num_workers=getattr(cfg.data, "num_workers", num_workers_default),
-            persistent_workers=pin and getattr(cfg.data, "num_workers", num_workers_default) > 0,
+            num_workers=getattr(cfg.test, "num_workers", num_workers_default),
+            persistent_workers=pin and getattr(cfg.test, "num_workers", num_workers_default) > 0,
+        )
+        test_loader_no_metanet = DataLoader(
+            ds,
+            batch_size=cfg.test.batch_size,
+            shuffle=False,
+            sampler=test_sampler,
+            collate_fn=collator_no_metanet,
+            pin_memory=pin,
+            num_workers=getattr(cfg.test, "num_workers", num_workers_default),
+            persistent_workers=pin and getattr(cfg.test, "num_workers", num_workers_default) > 0,
         )
 
         # Checkpoint root
@@ -284,8 +331,8 @@ def main(cfg: DictConfig):
             dist.barrier()
 
         # ===== Generate answers on this split and save to JSON (DDP-safe) =====
-        local_results = test(model, ddp_metanet, test_loader, device, use_amp=cfg.run.use_fp16)
-        local_results_no_metanet = test(model, None, test_loader, device, use_amp=cfg.run.use_fp16)
+        local_results = test(cfg, model, metanetwork, tokenizer, test_loader, use_amp=cfg.run.use_fp16, device=device)
+        local_results_no_metanet = test(cfg, model, None, tokenizer, test_loader_no_metanet, use_amp=cfg.run.use_fp16, device=device)
 
         # Gather results across ranks (if distributed), then write once on rank 0
         if ddp_is_active():

@@ -9,3 +9,4 @@ models/**
 tensorboard
 nohup.out
 qwen-finetuned
+test

@@ -64,10 +64,14 @@ metanetwork:
     scale: 0.001
 
 test:
-  source: loogle
+  source: easy
   max_new_tokens: 1024
   save_path: test
-  batch_size: 8
+  batch_size: 4
+  num_workers: 4 
+  judger_model: gpt-4.1-nano
+  max_concurrency: 32
+  max_retries: 6
 
 hydra:
   job:
