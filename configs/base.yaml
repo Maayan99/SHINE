@@ -1,5 +1,4 @@
-# Not ready yet
-resume_global_step: latest  # -1: don't resume,   int: resume from global steps,  latest: resume from latest
+resume_global_step: -1  # -1: don't resume,   int: resume from global steps,  latest: resume from latest
 
 run:
   seed: 42
@@ -8,7 +7,7 @@ run:
   device: cuda                # auto | cuda | cpu
 
 paths:
-  model_path: "./models/Qwen3-0.6B"
+  model_path: "./models/Qwen3-8B"
   output_dir: "qwen-finetuned"   # final save; checkpoints go under Hydra's run dir unless overridden
 
 data:
@@ -41,8 +40,7 @@ save:
 model:
   lora_r: 4
   num_mem_token: ${num_mem_token}
-  model_class_path: "LoraQwen.LoraQwen3ForCausalLM"   # module.ClassName
-  meta_model_class_path: "LoraQwen.LoraQwen3Model" # module.ClassName
+  metamodel_class_path: "LoraQwen.LoraQwen3ForCausalLM" # module.ClassName
   config_class_path: "LoraQwen.Qwen3Config" # module.ClassName
   tokenizer_from: "${paths.model_path}"
   model_from: "${paths.model_path}"
@@ -60,7 +58,7 @@ metanetwork:
       batch_first: True
       norm_first: False
       bias: True
-    num_layers: 4 # Fixed
+    num_layers: 8 # Must be even
     scale: 0.001
 
 test:

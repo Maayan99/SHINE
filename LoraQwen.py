@@ -357,6 +357,7 @@ class LoraQwen3Model(Qwen3PreTrainedModel):
         use_cache: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
         loradict: Optional[dict] = None,
+        ignore_mem_token: bool = False, 
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPast:
         r"""
@@ -369,7 +370,7 @@ class LoraQwen3Model(Qwen3PreTrainedModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
-            if self.use_mem_token:
+            if self.use_mem_token and not ignore_mem_token:
                 inputs_embeds = torch.concat((inputs_embeds, self.mem_tokens.unsqueeze(0).repeat(inputs_embeds.shape[0], 1, 1)), dim=-2)
                 if attention_mask is not None:
                     attention_mask = torch.concat([attention_mask, torch.ones_like(attention_mask[:, [0]]).repeat(1, self.num_mem_token)], dim=-1)
@@ -410,7 +411,7 @@ class LoraQwen3Model(Qwen3PreTrainedModel):
         # create position embeddings to be shared across the decoder layers
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
 
-        if self.use_mem_token:
+        if self.use_mem_token and not ignore_mem_token:
             memory_states = torch.zeros((hidden_states.shape[0], self.config.num_hidden_layers, self.num_mem_token, self.config.hidden_size)).to(self.device)
         for i, decoder_layer in enumerate(self.layers[: self.config.num_hidden_layers]):
             hidden_states = decoder_layer(
@@ -424,16 +425,16 @@ class LoraQwen3Model(Qwen3PreTrainedModel):
                 loradict=loradict[i] if isinstance(loradict, dict) else None,
                 **kwargs,
             )
-            if self.use_mem_token:
+            if self.use_mem_token and not ignore_mem_token:
                 memory_states[:, i, :, :] = hidden_states[:, -self.num_mem_token:].to(self.device)
 
-        if self.use_mem_token:
+        if self.use_mem_token and not ignore_mem_token:
             hidden_states = hidden_states[:, :-self.num_mem_token, :]
         hidden_states = self.norm(hidden_states)
         return MemoryModelOutputWithPast(
             last_hidden_state=hidden_states,
             past_key_values=past_key_values if use_cache else None,
-            memory_states=memory_states if self.use_mem_token else None,
+            memory_states=memory_states if (self.use_mem_token and not ignore_mem_token) else None,
         )
     
     def lora_params_numel(self, r):
@@ -492,6 +493,7 @@ class LoraQwen3ForCausalLM(Qwen3PreTrainedModel, GenerationMixin):
         cache_position: Optional[torch.LongTensor] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
         loradict: Optional[dict] = None,
+        ignore_mem_token: bool = False,
         **kwargs: Unpack[TransformersKwargs],
     ) -> CausalLMOutputWithPast:
         r"""
@@ -527,6 +529,7 @@ class LoraQwen3ForCausalLM(Qwen3PreTrainedModel, GenerationMixin):
             use_cache=use_cache,
             cache_position=cache_position,
             loradict=loradict,
+            ignore_mem_token=ignore_mem_token,
             **kwargs,
         )
 
@@ -545,7 +548,7 @@ class LoraQwen3ForCausalLM(Qwen3PreTrainedModel, GenerationMixin):
             past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
-            memory_states=outputs.memory_states,
+            memory_states=outputs.memory_states if not ignore_mem_token else None,
         )
 
     def lora_params_numel(self, r):

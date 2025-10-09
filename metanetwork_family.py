@@ -50,10 +50,11 @@ class MetanetworkTransformer(nn.Module):
         '''
         memory_states = memory_states + self.layer_pe.unsqueeze(-2) + self.token_pe # apply PE
         batch_size = memory_states.shape[0]
-        memory_states = self.transformer_layers[0](memory_states.transpose(1, 2).flatten(0, 1)).unflatten(0, (batch_size, self.num_mem_token)).transpose(1, 2) # exchange information among layers
-        memory_states = self.transformer_layers[1](memory_states.flatten(0, 1)).unflatten(0, (batch_size, self.num_layers)) # exchange information among tokens
-        memory_states = self.transformer_layers[2](memory_states.transpose(1, 2).flatten(0, 1)).unflatten(0, (batch_size, self.num_mem_token)).transpose(1, 2) # exchange information among layers
-        memory_states = self.transformer_layers[3](memory_states.flatten(0, 1)).unflatten(0, (batch_size, self.num_layers)) # exchange information among tokens
+        for i in range(len(self.transformer_layers)):
+            if i % 2 == 0:
+                memory_states = self.transformer_layers[i](memory_states.transpose(1, 2).flatten(0, 1)).unflatten(0, (batch_size, self.num_mem_token)).transpose(1, 2) # exchange information among layers
+            else:
+                memory_states = self.transformer_layers[i](memory_states.flatten(0, 1)).unflatten(0, (batch_size, self.num_layers)) # exchange information among tokens
         return memory_states.flatten(1, -1)
 
 class Metanetwork(nn.Module):
@@ -68,14 +69,18 @@ class Metanetwork(nn.Module):
         else:
             raise ValueError(f"Unknown metanetwork type: {cfg.metanetwork.type}")
 
-    def forward(self, input_ids, attention_mask, labels = None) -> dict:
+    def forward(self, input_ids, attention_mask, labels = None, use_metanet = True) -> dict:
         '''
         memory_states: (batch_size, num_layer, num_mem_token, hidden_size)
         '''
-        outputs = self.metamodel(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-        memory_states = outputs.memory_states
-        plain_output = self.metanetwork(memory_states)  # (batch_size, output_dim)
-        loradict = self.metamodel.generate_lora_dict(self.lora_r, scale=self.scale, plain_tensor=plain_output)
-        return loradict
+        if use_metanet:
+            outputs = self.metamodel(input_ids=input_ids, attention_mask=attention_mask)
+            memory_states = outputs.memory_states
+            plain_output = self.metanetwork(memory_states)  # (batch_size, output_dim)
+            loradict = self.metamodel.generate_lora_dict(self.lora_r, scale=self.scale, plain_tensor=plain_output)
+            outputs = self.metamodel(input_ids=input_ids, attention_mask=attention_mask, loradict=loradict, labels=labels, ignore_mem_token=True)
+        else:
+            outputs = self.metamodel(input_ids=input_ids, attention_mask=attention_mask, labels=labels, ignore_mem_token=True)
+        return outputs
         
     

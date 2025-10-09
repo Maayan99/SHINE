@@ -12,9 +12,8 @@ import time
 
 logger = get_logger("save & load")
 
-def save_checkpoint(model, metanetwork, tokenizer, out_dir: str, extra_state: Dict[str, Any] = None):
+def save_checkpoint(metanetwork, tokenizer, out_dir: str, extra_state: Dict[str, Any] = None):
     os.makedirs(out_dir, exist_ok=True)
-    model.save_pretrained(os.path.join(out_dir, "model"))
     metanetwork.metamodel.save_pretrained(os.path.join(out_dir, "metamodel"))
     torch.save(metanetwork.metanetwork.state_dict(), os.path.join(out_dir, "metanetwork.pth"))
     tokenizer.save_pretrained(os.path.join(out_dir, "tokenizer"))
@@ -22,16 +21,14 @@ def save_checkpoint(model, metanetwork, tokenizer, out_dir: str, extra_state: Di
         with open(os.path.join(out_dir, "trainer_state.json"), "w", encoding="utf-8") as f:
             json.dump(extra_state, f, ensure_ascii=False, indent=2)
 
-def load_checkpoint(model, metanetwork, tokenizer, in_dir, device: str):
-    model = model.__class__.from_pretrained(os.path.join(in_dir, "model"))
-    model.to(device)
+def load_checkpoint(metanetwork, tokenizer, in_dir, device: str):
     metanetwork.to("cpu")
     metanetwork.metamodel = metanetwork.metamodel.__class__.from_pretrained(os.path.join(in_dir, "metamodel"))
     metanetwork.metanetwork.load_state_dict(torch.load(os.path.join(in_dir, "metanetwork.pth"), weights_only=False, map_location="cpu"))
     metanetwork.to(device)
     tokenizer = tokenizer.__class__.from_pretrained(os.path.join(in_dir, "tokenizer"))
-    freeze(model, metanetwork.metamodel)
-    return model, metanetwork, tokenizer
+    freeze(metanetwork.metamodel)
+    return metanetwork, tokenizer
 
 def _rng_state_dict():
     state = {

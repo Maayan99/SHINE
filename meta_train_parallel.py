@@ -74,17 +74,11 @@ logger = get_logger("metalora")
 
 
 @torch.no_grad()
-def evaluate(model, metanetwork_ddp_or_module, dataloader, device, use_amp: bool = False) -> Dict[str, float]:
+def evaluate(metanetwork_ddp_or_module, dataloader, device, use_amp: bool = False, use_metanet: bool = True) -> Dict[str, float]:
     # Handle both wrapped and unwrapped metanetwork
-    if metanetwork_ddp_or_module is None:
-        use_metanet = False
-    else:
-        use_metanet = True
-        metanet = metanetwork_ddp_or_module.module if isinstance(metanetwork_ddp_or_module, DDP) else metanetwork_ddp_or_module
-
-    model.eval()
-    if use_metanet:
-        metanet.eval()
+    metanet = metanetwork_ddp_or_module.module if isinstance(metanetwork_ddp_or_module, DDP) else metanetwork_ddp_or_module
+    metanet.eval()
+    
     total_loss = 0.0
     n_tokens = 0
     if use_amp and device.type == "cuda":
@@ -99,13 +93,8 @@ def evaluate(model, metanetwork_ddp_or_module, dataloader, device, use_amp: bool
         labels = batch["labels"].to(device, non_blocking=True)
 
         with scaler_ctx():
-            if use_metanet:
-                loradict = metanet(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-                new_outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels, loradict=loradict)
-                loss = new_outputs.loss
-            else:
-                outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-                loss = outputs.loss
+            outputs = metanet(input_ids=input_ids, attention_mask=attention_mask, labels=labels, use_metanet=use_metanet)
+            loss = outputs.loss
 
         valid_tokens = (labels != -100).sum().item()
         total_loss += loss.item() * valid_tokens
@@ -120,9 +109,8 @@ def evaluate(model, metanetwork_ddp_or_module, dataloader, device, use_amp: bool
 
     avg_loss = total_loss / max(n_tokens, 1)
     ppl = math.exp(avg_loss) if avg_loss < 20 else float("inf")
-    model.train()
-    if use_metanet:
-        metanet.train()
+
+    metanet.train()
     return {"eval_loss": avg_loss, "perplexity": ppl}
 
 
@@ -144,34 +132,32 @@ def main(cfg: DictConfig):
     # Load model/tokenizer (supports your local LoRA-wrapped Qwen class)
     if is_main_process():
         logger.info("Loading model & tokenizer...")
-    ModelCls = _import_class(cfg.model.model_class_path)
-    MetaModelCls = _import_class(cfg.model.meta_model_class_path)
+    MetaModelCls = _import_class(cfg.model.metamodel_class_path)
     ConfigCls = _import_class(cfg.model.config_class_path)
     config = ConfigCls.from_pretrained(cfg.model.model_from)
     config.num_mem_token = -1
     cfg.hidden_size = config.hidden_size
     cfg.num_layers = config.num_hidden_layers
-    model = ModelCls.from_pretrained(cfg.model.model_from, config=config)
-    model.train()
-    model.to(device)
 
     if cfg.metanetwork.type == "transformer":
-        assert model.lora_params_numel(cfg.model.lora_r) % (cfg.hidden_size * cfg.num_layers) == 0, \
+        tmp_model = MetaModelCls.from_pretrained(cfg.model.model_from, config=config)
+        assert tmp_model.lora_params_numel(cfg.model.lora_r) % (cfg.hidden_size * cfg.num_layers) == 0, \
             "For transformer metanetwork, num_mem_token must be set to model.lora_params_numel(lora_r) / (hidden_size * num_layers)"
-        config.num_mem_token = model.lora_params_numel(cfg.model.lora_r) // (cfg.hidden_size * cfg.num_layers)
+        config.num_mem_token = tmp_model.lora_params_numel(cfg.model.lora_r) // (cfg.hidden_size * cfg.num_layers)
         cfg.num_mem_token = config.num_mem_token
+        del tmp_model
         if is_main_process():
             logger.info(f"Using transformer metanetwork, set num_mem_token to {config.num_mem_token}")
     else:
-        config.num_mem_token = cfg.model.num_mem_token
+        config.num_mem_token = cfg.num_mem_token
 
+    tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_from)
     metamodel = MetaModelCls.from_pretrained(cfg.model.model_from, config=config)
     metamodel.reset_mem_tokens()
-    tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_from)
-    metanetwork = Metanetwork(metamodel, cfg, model.lora_params_numel(cfg.model.lora_r))
+    metanetwork = Metanetwork(metamodel, cfg, metamodel.lora_params_numel(cfg.model.lora_r))
     metanetwork.train()
     metanetwork.to(device)
-    freeze(model, metamodel)  # base model frozen; metanetwork has trainable params
+    freeze(metamodel)  # base model frozen; metanetwork has trainable params
     
     # Training loop scaffolding
     hydra_run_dir = os.getcwd()
@@ -193,7 +179,7 @@ def main(cfg: DictConfig):
         # Load model & tokenizer
         if is_main_process():
             logger.info(f"Resume mode, loading from {resume_dir}...")
-        model, metanetwork, tokenizer = load_checkpoint(model, metanetwork, tokenizer, resume_dir, device)
+        metanetwork, tokenizer = load_checkpoint(metanetwork, tokenizer, resume_dir, device)
         resume_state = load_training_state(resume_dir)
 
     # ====== Wrap ONLY the trainable module in DDP when applicable ======
@@ -237,10 +223,6 @@ def main(cfg: DictConfig):
         if is_main_process():
             logger.info(f"Train len: {len(train_texts)}")
             logger.info(f"Val len: {len(val_texts)}")
-    elif cfg.data.source == "loogle":
-        datasets = ["shortdep_qa", "shortdep_cloze", "longdep_qa", "summarization"]
-        for testset in datasets:
-            data = load_dataset('bigai-nlco/LooGLE', testset, split='test', cache_dir=os.path.join('data', 'loogle', testset))
     else:
         raise ValueError(f"Unknown data source: {cfg.data.source}")
 
@@ -338,9 +320,8 @@ def main(cfg: DictConfig):
 
             with torch.amp.autocast(enabled=(cfg.run.use_fp16 and device.type == "cuda"), device_type=str(device)):
                 # Forward through possibly DDP-wrapped metanetwork
-                loradict = ddp_metanet(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-                new_outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels, loradict=loradict)
-                loss = new_outputs.loss / max(1, cfg.run.gradient_accumulation_steps)
+                outputs = ddp_metanet(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+                loss = outputs.loss / max(1, cfg.run.gradient_accumulation_steps)
 
             if writer is not None:
                 writer.add_scalar("train/lr", lr_scheduler.get_last_lr()[0], global_step)
@@ -398,7 +379,6 @@ def main(cfg: DictConfig):
                         logger.info(f"Saving checkpoint to {ckpt_dir}")
                         # Save unwrapped metanetwork (state is in ddp_metanet.module when DDP)
                         save_checkpoint(
-                            model,
                             ddp_metanet.module if isinstance(ddp_metanet, DDP) else ddp_metanet,
                             tokenizer,
                             ckpt_dir,
@@ -416,7 +396,7 @@ def main(cfg: DictConfig):
 
                 # ---- Eval + best checkpoint ----
                 if getattr(cfg.eval, "eval_steps", 0) and global_step % cfg.eval.eval_steps == 0:
-                    eval_metrics = evaluate(model, ddp_metanet, val_loader, device, use_amp=cfg.run.use_fp16)
+                    eval_metrics = evaluate(ddp_metanet, val_loader, device, use_amp=cfg.run.use_fp16)
                     if writer is not None:
                         writer.add_scalar("eval/loss", eval_metrics["eval_loss"], global_step)
                         writer.add_scalar("eval/ppl", eval_metrics["perplexity"], global_step)
@@ -430,7 +410,6 @@ def main(cfg: DictConfig):
                             best_dir = os.path.join(ckpt_root, "best")
                             logger.info(f"New best model! Saving to {best_dir}")
                             save_checkpoint(
-                                model,
                                 ddp_metanet.module if isinstance(ddp_metanet, DDP) else ddp_metanet,
                                 tokenizer,
                                 best_dir,
@@ -453,7 +432,7 @@ def main(cfg: DictConfig):
         if is_main_process():
             logger.info(f"Epoch {epoch} done. train_loss={avg_epoch_loss_world:.4f} train_ppl={epoch_ppl:.2f}")
 
-        eval_metrics = evaluate(model, ddp_metanet, val_loader, device, use_amp=cfg.run.use_fp16)
+        eval_metrics = evaluate(ddp_metanet, val_loader, device, use_amp=cfg.run.use_fp16)
         if writer is not None:
             writer.add_scalar("eval/loss", eval_metrics["eval_loss"], global_step)
             writer.add_scalar("eval/ppl", eval_metrics["perplexity"], global_step)
@@ -466,7 +445,6 @@ def main(cfg: DictConfig):
                 best_dir = os.path.join(ckpt_root, "best")
                 logger.info(f"New best model! Saving to {best_dir}")
                 save_checkpoint(
-                    model,
                     ddp_metanet.module if isinstance(ddp_metanet, DDP) else ddp_metanet,
                     tokenizer,
                     best_dir,
@@ -481,12 +459,12 @@ def main(cfg: DictConfig):
                 )
         if ddp_is_active():
             dist.barrier()
-
+    
     # Initial eval
-    init_eval_without_metanetwork = evaluate(model, None, val_loader, device, use_amp=cfg.run.use_fp16)
+    init_eval_without_metanetwork = evaluate(ddp_metanet, val_loader, device, use_amp=cfg.run.use_fp16, use_metanet=False)
     if is_main_process():
         logger.info(f"[without lora] loss={init_eval_without_metanetwork['eval_loss']:.4f} ppl={init_eval_without_metanetwork['perplexity']:.2f}")
-    init_eval = evaluate(model, ddp_metanet, val_loader, device, use_amp=cfg.run.use_fp16)
+    init_eval = evaluate(ddp_metanet, val_loader, device, use_amp=cfg.run.use_fp16)
     if writer is not None:
         writer.add_scalar("eval/loss", init_eval["eval_loss"], global_step)
         writer.add_scalar("eval/ppl", init_eval["perplexity"], global_step)
@@ -502,7 +480,6 @@ def main(cfg: DictConfig):
         logger.info("Saving final model...")
         final_dir = os.path.join(ckpt_root, "final")
         save_checkpoint(
-            model,
             ddp_metanet.module if isinstance(ddp_metanet, DDP) else ddp_metanet,
             tokenizer,
             final_dir,
@@ -513,7 +490,6 @@ def main(cfg: DictConfig):
             stable_out = cfg.paths.output_dir
             os.makedirs(stable_out, exist_ok=True)
             save_checkpoint(
-                model,
                 ddp_metanet.module if isinstance(ddp_metanet, DDP) else ddp_metanet,
                 tokenizer,
                 stable_out,
