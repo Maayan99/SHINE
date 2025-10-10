@@ -3,7 +3,7 @@ resume_global_step: -1  # -1: don't resume,   int: resume from global steps,  la
 run:
   seed: 42
   use_fp16: false              # set false to disable AMP, or use bf16 if you extend it
-  gradient_accumulation_steps: 4
+  gradient_accumulation_steps: 8
   device: cuda                # auto | cuda | cpu
 
 paths:
@@ -12,8 +12,8 @@ paths:
 
 data:
   max_length: 1024
-  train_batch_size: 4
-  eval_batch_size: 4
+  train_batch_size: 2
+  eval_batch_size: 2
   num_workers: 4
   # Switch between "mock" and "hf" when you add a real dataset loader
   source: "transmla"
@@ -83,7 +83,7 @@ hidden_size: -1
 num_layers: -1
 num_mem_token: 4
 
-# resume_global_step: latest  # -1: don't resume,   int: resume from global steps,  latest: resume from latest
+# resume_global_step: -1  # -1: don't resume,   int: resume from global steps,  latest: resume from latest
 
 # run:
 #   seed: 42

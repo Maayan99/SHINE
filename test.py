@@ -175,32 +175,33 @@ def main(cfg: DictConfig):
     # Load model/tokenizer (supports your local LoRA-wrapped Qwen class)
     if is_main_process():
         logger.info("Loading model & tokenizer...")
-    ModelCls = _import_class(cfg.model.model_class_path)
-    MetaModelCls = _import_class(cfg.model.meta_model_class_path)
+    MetaModelCls = _import_class(cfg.model.metamodel_class_path)
     ConfigCls = _import_class(cfg.model.config_class_path)
     config = ConfigCls.from_pretrained(cfg.model.model_from)
     config.num_mem_token = -1
     cfg.hidden_size = config.hidden_size
     cfg.num_layers = config.num_hidden_layers
-    model = ModelCls.from_pretrained(cfg.model.model_from, config=config)
-    model.train()
 
     if cfg.metanetwork.type == "transformer":
-        assert model.lora_params_numel(cfg.model.lora_r) % (cfg.hidden_size * cfg.num_layers) == 0, \
+        tmp_model = MetaModelCls.from_pretrained(cfg.model.model_from, config=config)
+        assert tmp_model.lora_params_numel(cfg.model.lora_r) % (cfg.hidden_size * cfg.num_layers) == 0, \
             "For transformer metanetwork, num_mem_token must be set to model.lora_params_numel(lora_r) / (hidden_size * num_layers)"
-        config.num_mem_token = model.lora_params_numel(cfg.model.lora_r) // (cfg.hidden_size * cfg.num_layers)
+        config.num_mem_token = tmp_model.lora_params_numel(cfg.model.lora_r) // (cfg.hidden_size * cfg.num_layers)
         cfg.num_mem_token = config.num_mem_token
+        del tmp_model
         if is_main_process():
             logger.info(f"Using transformer metanetwork, set num_mem_token to {config.num_mem_token}")
     else:
-        config.num_mem_token = cfg.model.num_mem_token
+        config.num_mem_token = cfg.num_mem_token
 
+    tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_from)
     metamodel = MetaModelCls.from_pretrained(cfg.model.model_from, config=config)
     metamodel.reset_mem_tokens()
-    tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_from, padding_side="left")
-    metanetwork = Metanetwork(metamodel, cfg, model.lora_params_numel(cfg.model.lora_r))
+    metanetwork = Metanetwork(metamodel, cfg, metamodel.lora_params_numel(cfg.model.lora_r))
     metanetwork.train()
-    freeze(model, metamodel)  # base model frozen; metanetwork has trainable params
+    metanetwork.to(device)
+    freeze(metamodel) 
+    
     
     # Training loop scaffolding
     hydra_run_dir = os.getcwd()
@@ -217,7 +218,7 @@ def main(cfg: DictConfig):
     # Load model & tokenizer
     if is_main_process():
         logger.info(f"Resume mode, loading from {resume_dir}...")
-    model, metanetwork, _ = load_checkpoint(model, metanetwork, tokenizer, resume_dir, device)
+    metanetwork = load_checkpoint(metanetwork, resume_dir, device)
 
     # Data
     if is_main_process():
