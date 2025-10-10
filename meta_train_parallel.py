@@ -71,7 +71,7 @@ from utils.myinit import _resolve_device, _import_class
 from collections import OrderedDict
 
 logger = get_logger("metalora")
-
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 @torch.no_grad()
 def evaluate(metanetwork_ddp_or_module, dataloader, device, use_amp: bool = False, use_metanet: bool = True) -> Dict[str, float]:
@@ -371,11 +371,6 @@ def main(cfg: DictConfig):
                                             "tmp_loss": f"{tmp_loss_world:.4f}", "tmp_ppl": f"{tmp_ppl:.2f}"})
                     tmp_loss = 0.0
                     tmp_tokens = 0
-                
-                # Free memory
-                del input_ids, attention_mask, labels, outputs, loss
-                if device.type == "cuda":
-                    torch.cuda.empty_cache()
 
                 # ---- Periodic checkpoint (rank 0 only) ----
                 if getattr(cfg.save, "save_steps", 0) and global_step % cfg.save.save_steps == 0:
@@ -430,10 +425,6 @@ def main(cfg: DictConfig):
                     if ddp_is_active():
                         dist.barrier()
         
-        try:
-            del input_ids, attention_mask, labels, outputs, loss
-        except:
-            pass
         if device.type == "cuda":
             torch.cuda.empty_cache()
         # Epoch-end eval/log (averaged)

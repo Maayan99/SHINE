@@ -51,7 +51,7 @@ metanetwork:
     encoder_cfg:
       d_model: 4096 # Fixed
       nhead: 32
-      dim_feedforward: 12288
+      dim_feedforward: 8192
       dropout: 0
       activation: gelu
       layer_norm_eps: 0.00001
