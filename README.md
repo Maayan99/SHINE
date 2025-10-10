@@ -19,4 +19,5 @@ Download dataset
 ```
 export HF_ENDPOINT=https://hf-mirror.com
 hf download fxmeng/transmla_pretrain_6B_tokens --repo-type dataset --local-dir data/transmla_pretrain_6B_tokens
+hf download bigai-nlco/LooGLE --repo-type dataset --local-dir data/loogle
 ```
