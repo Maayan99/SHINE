@@ -314,7 +314,8 @@ def main(cfg: DictConfig):
 
         for step, batch in enumerate(pbar, start=1):
             if epoch == start_epoch and step <= start_step_in_epoch:
-                lr_scheduler.step()
+                if step % max(1, cfg.run.gradient_accumulation_steps) == 0:
+                    lr_scheduler.step()
                 continue
             input_ids = batch["input_ids"].to(device, non_blocking=True)
             attention_mask = batch["attention_mask"].to(device, non_blocking=True)
