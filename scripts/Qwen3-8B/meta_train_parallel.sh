@@ -4,14 +4,14 @@
 #SBATCH -p IAI_SLURM_HGX
 #SBATCH --qos=16gpu-hgx
 #SBATCH -N 1
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:8
 #SBATCH --time=48:00:00
 #SBATCH -c 64
 #SBATCH -o metalora.out
 #SBATCH -e metalora.err
 
 
-NUM_GPUS=4
+NUM_GPUS=8
 MASTER_PORT=18900             
 CONFIG_NAME="Qwen3-8B"       
         
