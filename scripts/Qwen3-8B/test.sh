@@ -14,6 +14,7 @@
 NUM_GPUS=8
 MASTER_PORT=18900             
 CONFIG_NAME="Qwen3-8B"       
+TEST_BATCH_SIZE=4
         
 
 # Find available port
@@ -37,4 +38,5 @@ torchrun \
     --master_port=$MASTER_PORT \
     test.py \
     --config-name $CONFIG_NAME \
+    test.batch_size=$TEST_BATCH_SIZE \
     > tmp_test.txt 2>&1
