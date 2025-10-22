@@ -1,5 +1,7 @@
+mode: train
+
 resume_global_step: latest  # -1: don't resume,   int: resume from global steps,  latest: resume from latest
-test_global_step: final # int: test at global steps,  latest: test at latest,   best: test at best checkpoint
+test_global_step: latest # int: test at global steps,  latest: test at latest,   best: test at best checkpoint
 
 run:
   seed: 42
@@ -22,7 +24,7 @@ data:
 optim:
   learning_rate: 0.00005
   weight_decay: 0.01
-  num_epochs: 3
+  num_epochs: 1
   warmup_steps: 100
   grad_clip_norm: 0.0
 

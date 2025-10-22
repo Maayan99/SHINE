@@ -42,7 +42,7 @@ import logging
 from torch.utils.tensorboard import SummaryWriter
 from metanetwork_family import Metanetwork
 
-from utils.mydataset import TextDataset, CausalLMDataCollator, create_mock_dataset, SquadDataset, SquadCollator
+from utils.mydataset import TextDataset, create_mock_dataset, SquadDataset, SquadCollator, PretrainCollator
 from utils.myseed import set_seed
 from utils.mylogging import get_logger
 from utils.mysaveload import (
@@ -445,8 +445,9 @@ def main(cfg: DictConfig):
     
     # Training loop scaffolding
     hydra_run_dir = os.getcwd()
-    ckpt_root = os.path.join(hydra_run_dir, "checkpoints")
-    os.makedirs(ckpt_root, exist_ok=True)
+    ckpt_root = os.path.join(hydra_run_dir, "checkpoints", f"{cfg.mode}")
+    if is_main_process():
+        os.makedirs(ckpt_root, exist_ok=True)
     if cfg.resume_global_step == -1:
         resume_dir = None
     elif cfg.resume_global_step == "latest":
@@ -526,19 +527,22 @@ def main(cfg: DictConfig):
     # Data
     if is_main_process():
         logger.info("Preparing data...")
-    if cfg.data.source == "mock":
-        train_texts, val_texts = create_mock_dataset()
-        train_ds = TextDataset(train_texts, tokenizer, max_length=cfg.data.max_length)
-        val_ds = TextDataset(val_texts, tokenizer, max_length=cfg.data.max_length)
-        collator = CausalLMDataCollator(tokenizer=tokenizer, max_length=cfg.data.max_length)
-    # elif cfg.data.source == "transmla":
-    #     dataset = load_dataset(os.path.join("data", "transmla_pretrain_6B_tokens"), split="train")
-    #     split_dataset = dataset.train_test_split(test_size=0.001, seed=42)
-    #     train_texts = split_dataset["train"]
-    #     val_texts = split_dataset["test"]
-    #     if is_main_process():
-    #         logger.info(f"Train len: {len(train_texts)}")
-    #         logger.info(f"Val len: {len(val_texts)}")
+    # if cfg.data.source == "mock":
+    #     train_texts, val_texts = create_mock_dataset()
+    #     train_ds = TextDataset(train_texts, tokenizer, max_length=cfg.data.max_length)
+    #     val_ds = TextDataset(val_texts, tokenizer, max_length=cfg.data.max_length)
+    #     collator = CausalLMDataCollator(tokenizer=tokenizer, max_length=cfg.data.max_length)
+    if cfg.data.source == "transmla":
+        dataset = load_dataset(os.path.join("data", "transmla_pretrain_6B_tokens"), split="train")
+        split_dataset = dataset.train_test_split(test_size=0.0001, seed=42)
+        train_texts = split_dataset["train"]
+        val_texts = split_dataset["test"]
+        if is_main_process():
+            logger.info(f"Train len: {len(train_texts)}")
+            logger.info(f"Val len: {len(val_texts)}")
+        train_ds = TextDataset(train_texts["text"], tokenizer, max_length=cfg.data.max_length)
+        val_ds = TextDataset(val_texts["text"], tokenizer, max_length=cfg.data.max_length)
+        collator = PretrainCollator(tokenizer=tokenizer, max_length=cfg.data.max_length, metatrain=True)
     elif cfg.data.source == "squad":
         # features: ['id', 'title', 'context', 'question', 'answers'],
         # num_rows: 87599
@@ -592,10 +596,6 @@ def main(cfg: DictConfig):
         logger.info(f"TensorBoard logs will be written to: {tb_log_dir}")
         logger.info("Starting training loop...")
 
-    # Checkpoint root
-    ckpt_root = os.path.join(hydra_run_dir, "checkpoints")
-    if is_main_process():
-        os.makedirs(ckpt_root, exist_ok=True)
 
     # Make sure all ranks see the directory
     if ddp_is_active():

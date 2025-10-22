@@ -18,7 +18,7 @@ while true; do
     if ! nc -z 127.0.0.1 $MASTER_PORT; then
         break
     fi
-    ((MASTER_PORT++))
+    MASTER_PORT=$((MASTER_PORT + 1))
 done
 
 # === Environment variables (recommended for PyTorch & Hydra) ===

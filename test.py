@@ -360,8 +360,9 @@ def main(cfg: DictConfig):
             datasets.append(SquadDataset(data, tokenizer, max_length=cfg.data.max_length))
             if is_main_process():
                 logger.info(f"Loaded {cfg.test.source}/{testset} with {len(data)} samples")
-        collator = SquadCollator(tokenizer=tokenizer, max_length=cfg.data.max_length, use_reference=False)
+        collator = SquadCollator(tokenizer=tokenizer, max_length=cfg.data.max_length)
         collator_no_metanet = SquadCollator(tokenizer=tokenizer, max_length=cfg.data.max_length, use_reference=True)
+        collator_only_question = SquadCollator(tokenizer=tokenizer, max_length=cfg.data.max_length, only_question=True)
     else:
         raise ValueError(f"Unknown data source: {cfg.test.source}")
 
@@ -393,6 +394,16 @@ def main(cfg: DictConfig):
             num_workers=getattr(cfg.test, "num_workers", num_workers_default),
             persistent_workers=pin and getattr(cfg.test, "num_workers", num_workers_default) > 0,
         )
+        test_loader_only_question = DataLoader(
+            ds,
+            batch_size=cfg.test.batch_size,
+            shuffle=False,
+            sampler=test_sampler,
+            collate_fn=collator_only_question,
+            pin_memory=pin,
+            num_workers=getattr(cfg.test, "num_workers", num_workers_default),
+            persistent_workers=pin and getattr(cfg.test, "num_workers", num_workers_default) > 0,
+        )
 
         # Checkpoint root
         ckpt_root = os.path.join(hydra_run_dir, "checkpoints")
@@ -402,39 +413,69 @@ def main(cfg: DictConfig):
             dist.barrier()
 
         # ===== Generate answers on this split and save to JSON (DDP-safe) =====
-        local_results = test(cfg, metanetwork, tokenizer, test_loader, use_metanet=True, use_amp=cfg.run.use_fp16, device=device, metalora=metalora)
-        local_results_no_metanet = test(cfg, metanetwork, tokenizer, test_loader_no_metanet, use_metanet=False, use_amp=cfg.run.use_fp16, device=device)
+        # local_results = test(cfg, metanetwork, tokenizer, test_loader, use_metanet=True, use_amp=cfg.run.use_fp16, device=device, metalora=metalora)
+        # gather_and_save(local_results, ".json")
+        # local_results_no_metanet = test(cfg, metanetwork, tokenizer, test_loader_no_metanet, use_metanet=False, use_amp=cfg.run.use_fp16, device=device)
+        # gather_and_save(local_results_no_metanet, "_no_metanet.json")
+        local_results_only_question = test(cfg, metanetwork, tokenizer, test_loader_only_question, use_metanet=False, use_amp=cfg.run.use_fp16, device=device)
+        gather_and_save(local_results_only_question, "_only_question.json")
+        
+        def gather_and_save(local_results, output_suffix):
+            # Gather results across ranks (if distributed), then write once on rank 0
+            if ddp_is_active():
+                gathered = [None for _ in range(get_world_size())]
+                dist.all_gather_object(gathered, local_results)
+                if is_main_process():
+                    merged = []
+                    for part in gathered:
+                        if part:
+                            merged.extend(part)
+            else:
+                merged = local_results
+
+            if is_main_process():
+                out_dir = os.path.join(cfg.test.save_path, cfg.test.source)
+                os.makedirs(out_dir, exist_ok=True)
+                out_path = os.path.join(out_dir, f"{names[i]}", f"{output_suffix}")
+                with open(out_path.replace(".json", f"{output_suffix}"), "w", encoding="utf-8") as f:
+                    json.dump(merged, f, ensure_ascii=False, indent=2)
+                logger.info(f"Saved {len(merged)} predictions to {out_path}")
         
 
-        # Gather results across ranks (if distributed), then write once on rank 0
-        if ddp_is_active():
-            gathered = [None for _ in range(get_world_size())]
-            gathered_no_metanet = [None for _ in range(get_world_size())]
-            dist.all_gather_object(gathered, local_results)
-            dist.all_gather_object(gathered_no_metanet, local_results_no_metanet)
-            if is_main_process():
-                merged = []
-                for part in gathered:
-                    if part:
-                        merged.extend(part)
-                merged_no_metanet = []
-                for part in gathered_no_metanet:
-                    if part:
-                        merged_no_metanet.extend(part)
-        else:
-            merged = local_results
-            merged_no_metanet = local_results_no_metanet
+        # # Gather results across ranks (if distributed), then write once on rank 0
+        # if ddp_is_active():
+        #     gathered = [None for _ in range(get_world_size())]
+        #     gathered_no_metanet = [None for _ in range(get_world_size())]
+        #     gathered_only_question = [None for  _ in range(get_world_size())]
+        #     dist.all_gather_object(gathered, local_results)
+        #     dist.all_gather_object(gathered_no_metanet, local_results_no_metanet)
+        #     dist.all_gather_object(gathered_only_question, local_results_only_question)
+        #     if is_main_process():
+        #         merged = []
+        #         for part in gathered:
+        #             if part:
+        #                 merged.extend(part)
+        #         merged_no_metanet = []
+        #         for part in gathered_no_metanet:
+        #             if part:
+        #                 merged_no_metanet.extend(part)
+        #         for part in gathered_only_question:
+        #             if part:
+        #                 merged_no_metanet.extend(part)
+        # else:
+        #     merged = local_results
+        #     merged_no_metanet = local_results_no_metanet
 
-        if is_main_process():
-            out_dir = os.path.join(cfg.test.save_path, cfg.test.source)
-            os.makedirs(out_dir, exist_ok=True)
-            out_path = os.path.join(out_dir, f"{names[i]}.json")
-            with open(out_path, "w", encoding="utf-8") as f:
-                json.dump(merged, f, ensure_ascii=False, indent=2)
-            logger.info(f"Saved {len(merged)} predictions to {out_path}")
-            with open(out_path.replace(".json", "_no_metanet.json"), "w", encoding="utf-8") as f:
-                json.dump(merged_no_metanet, f, ensure_ascii=False, indent=2)
-            logger.info(f"Saved {len(merged_no_metanet)} predictions (no metanet) to {out_path.replace('.json', '_no_metanet.json')}")
+        # if is_main_process():
+        #     out_dir = os.path.join(cfg.test.save_path, cfg.test.source)
+        #     os.makedirs(out_dir, exist_ok=True)
+        #     out_path = os.path.join(out_dir, f"{names[i]}.json")
+        #     with open(out_path, "w", encoding="utf-8") as f:
+        #         json.dump(merged, f, ensure_ascii=False, indent=2)
+        #     logger.info(f"Saved {len(merged)} predictions to {out_path}")
+        #     with open(out_path.replace(".json", "_no_metanet.json"), "w", encoding="utf-8") as f:
+        #         json.dump(merged_no_metanet, f, ensure_ascii=False, indent=2)
+        #     logger.info(f"Saved {len(merged_no_metanet)} predictions (no metanet) to {out_path.replace('.json', '_no_metanet.json')}")
         
 
     # Cleanup DDP

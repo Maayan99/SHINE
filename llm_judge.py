@@ -122,9 +122,10 @@ async def judge(
     max_concurrency: int,
     max_retries: int,
     desc: str,
+    processed_scores: List[bool],
 ) -> None:
-    all_scores: List[bool] = []
     # Process per batch (each batch evaluated concurrently)
+    error_nums = 0
     for i in tqdm(range(0, len(res), max_concurrency), desc=desc):
         batch = res[i : i + max_concurrency]
         try:
@@ -139,35 +140,33 @@ async def judge(
             # Attach an error marker to each item in the batch
             updated = []
             for item in batch:
-                item = dict(item)
-                item["_error"] = f"{type(e).__name__}: {e}"
-                updated.append(item)
+                error_nums += 1
+                # item = dict(item)
+                # item["_error"] = f"{type(e).__name__}: {e}"
+                # updated.append(item)
 
         # Collect scores
         for t in updated:
             if isinstance(t.get("score"), bool):
-                all_scores.append(t["score"])
+                processed_scores.append(t["score"])
 
         # Append results
         with open(out_json_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(updated, ensure_ascii=False) + "\n")
+            for out in updated:
+                f.write(json.dumps(out, ensure_ascii=False, indent=2) + "\n")
 
     # Summary
-    if all_scores:
-        avg = sum(all_scores) / len(all_scores)
-        print(f"Average = {avg:.6f}; Total Samples = {len(all_scores)}")
-        with open(out_json_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"Average": avg}, ensure_ascii=False) + "\n")
+    avg = sum(processed_scores) / len(processed_scores)
+    print(f"Average = {avg:.6f}; Total Samples = {len(processed_scores)}; Errors = {error_nums}")
+    with open(out_json_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"Average": avg, "Errors": error_nums}, ensure_ascii=False, indent=2) + "\n")
 
 @hydra.main(version_base=None, config_path="configs")
 def main(cfg: DictConfig):
     asyncio.run(amain(cfg))
 
 async def amain(cfg: DictConfig):
-    if cfg.test.source == "loogle":
-        names = ["shortdep_qa", "shortdep_cloze", "longdep_qa", "summarization"]
-        load_dir = os.path.join(cfg.test.save_path, cfg.test.source)
-    elif cfg.test.source == "squad":
+    if cfg.test.source == "squad":
         names = ["squad"]
         load_dir = os.path.join(cfg.test.save_path, cfg.test.source)
     else:
@@ -176,43 +175,68 @@ async def amain(cfg: DictConfig):
     client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
     sem = asyncio.Semaphore(max(1, cfg.test.max_concurrency))
 
+    # suffixes = [".json", "_no_metanet.json", "_only_question.json"]
+    suffixes = [".json", "_no_metanet.json"]
     for name in names:
-        json_path = os.path.join(load_dir, f"{name}.json")
-        json_path_no_metanet = json_path.replace(".json", "_no_metanet.json")
+        for suffix in suffixes:
+            json_path = os.path.join(load_dir, f"{name}{suffix}")
+        
+            with open(json_path, "r", encoding="utf-8") as f:
+                res = json.load(f)
 
-        with open(json_path, "r", encoding="utf-8") as f:
-            res = json.load(f)
-        with open(json_path_no_metanet, "r", encoding="utf-8") as f:
-            res_no_metanet = json.load(f)
+            out_with = json_path.replace(".json", "_results.json")
+            
+            processed_indices = set()
+            processed_scores = []
+            new_begin = []
+            try:
+                with open(out_with, "r", encoding="utf-8") as f:
+                    last_file = f.read()
+                last_file = last_file.lstrip()  # skip whitespace/newlines
+                decoder = json.JSONDecoder()
+                pos = 0
+                while pos < len(last_file):
+                    while pos < len(last_file) and last_file[pos].isspace():
+                        pos += 1
+                    if pos >= len(last_file):
+                        break
+                    try:
+                        obj, pos = decoder.raw_decode(last_file, pos)
+                        if "idx" in obj and "score" in obj:
+                            processed_indices.add(obj["idx"])
+                            processed_scores.append(obj["score"])
+                            new_begin.append(obj)
+                    except json.JSONDecodeError:
+                        print("error")
+                        exit(1)
+            except:
+                print(f"No previous results found with suffix {suffix}, starting fresh.")
+            
+            new_res = []
+            for i, item in enumerate(res):
+                if "answer" in item and i not in processed_indices:
+                    item["idx"] = i
+                    new_res.append(item)
+                    
 
-        out_with = json_path.replace(".json", "_results.json")
-        out_without = json_path_no_metanet.replace(".json", "_results.json")
+            # Truncate old results for a clean run (optional)
+            with open(out_with, "w", encoding="utf-8") as f:
+                for item in new_begin:
+                    f.write(json.dumps(item, ensure_ascii=False, indent=2) + "\n")
 
-        # Truncate old results for a clean run (optional)
-        open(out_with, "w", encoding="utf-8").close()
-        open(out_without, "w", encoding="utf-8").close()
 
-        # Run both sets (sequentially here; you can gather if you prefer)
-        await judge(
-            client=client,
-            model=cfg.test.model,
-            res=res,
-            out_json_path=out_with,
-            sem=sem,
-            max_concurrency=cfg.test.max_concurrency,
-            max_retries=cfg.test.max_retries,
-            desc="Evaluating with metanetwork",
-        )
-        await judge(
-            client=client,
-            model=cfg.test.model,
-            res=res_no_metanet,
-            out_json_path=out_without,
-            sem=sem,
-            max_concurrency=cfg.test.max_concurrency,
-            max_retries=cfg.test.max_retries,
-            desc="Evaluating without metanetwork",
-        )
+            # Run both sets (sequentially here; you can gather if you prefer)
+            await judge(
+                client=client,
+                model=cfg.test.judger_model,
+                res=new_res,
+                out_json_path=out_with,
+                sem=sem,
+                max_concurrency=cfg.test.max_concurrency,
+                max_retries=cfg.test.max_retries,
+                desc=f"Evaluating with {suffix}",
+                processed_scores=processed_scores,
+            )
 
 if __name__ == "__main__":
     main()
