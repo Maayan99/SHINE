@@ -177,6 +177,7 @@ async def amain(cfg: DictConfig):
 
     suffixes = [".json", "_no_metanet.json", "_only_question.json"]
     # suffixes = [".json", "_no_metanet.json"]
+    # suffixes = ["_only_question.json"]
     for name in names:
         for suffix in suffixes:
             json_path = os.path.join(load_dir, f"{name}{suffix}")
