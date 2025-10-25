@@ -1,3 +1,5 @@
+mode: train
+
 resume_global_step: -1  # -1: don't resume,   int: resume from global steps,  latest: resume from latest
 test_global_step: latest # int: test at global steps,  latest: test at latest
 
