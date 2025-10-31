@@ -683,6 +683,15 @@ def main(cfg: DictConfig):
                 if cfg.optim.grad_clip_norm and cfg.optim.grad_clip_norm > 0:
                     scaler.unscale_(optimizer)
                     for group in optimizer.param_groups:
+                        # ---- Compute and print grad norm BEFORE clipping ----
+                        total_norm = 0.0
+                        for p in group["params"]:
+                            if p.grad is not None:
+                                param_norm = p.grad.data.norm(2)
+                                total_norm += param_norm.item() ** 2
+                        total_norm = total_norm ** 0.5
+                        print(f"Gradient norm before clipping: {total_norm:.4f}")
+                        # ------------------------------------------------------
                         torch.nn.utils.clip_grad_norm_(group["params"], cfg.optim.grad_clip_norm)
 
                 scaler.step(optimizer)

@@ -1,6 +1,6 @@
 mode: train
 
-resume_global_step: -1  # -1: don't resume,   int: resume from global steps,  latest: resume from latest
+resume_global_step: 600  # -1: don't resume,   int: resume from global steps,  latest: resume from latest
 test_global_step: latest # int: test at global steps,  latest: test at latest
 
 run:
@@ -8,8 +8,7 @@ run:
   use_fp16: false              # set false to disable AMP, or use bf16 if you extend it
   gradient_accumulation_steps: 8
   device: cuda                # auto | cuda | cpu
-  use_gradient_checkpoint: true # conflict with torch.compile
-
+  use_gradient_checkpoint: true 
 paths:
   model_path: "./models/Qwen3-8B"
   output_dir: "qwen-finetuned"   # final save; checkpoints go under Hydra's run dir unless overridden
@@ -27,7 +26,7 @@ optim:
   weight_decay: 0.01
   num_epochs: 3
   warmup_steps: 100
-  grad_clip_norm: 0.0
+  grad_clip_norm: 1.0
 
 logging:
   logging_steps: 1
@@ -62,7 +61,7 @@ metanetwork:
       batch_first: True
       norm_first: False
       bias: True
-    num_layers: 4 # Must be even
+    num_layers: 6 # Must be even
     scale: 0.001
 
 test:

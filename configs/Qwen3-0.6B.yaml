@@ -8,7 +8,7 @@ run:
   use_fp16: false              # set false to disable AMP, or use bf16 if you extend it
   gradient_accumulation_steps: 2
   device: cuda                # auto | cuda | cpu
-  use_gradient_checkpoint: True # conflict with torch.compile
+  use_gradient_checkpoint: True
 
 paths:
   model_path: "./models/Qwen3-0.6B"
