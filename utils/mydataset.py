@@ -151,6 +151,7 @@ class PretrainCollator:
                 for j in range(len(id) - 1, -1, -1):
                     if id[j].item() == self.thinkend_token_id:
                         labels[i, :j+2] = -100
+                        break
         elif not self.use_reference:
             input_ids = input_ids[:, :-2]
             input_attention_mask = input_attention_mask[:, :-2]
@@ -359,6 +360,7 @@ class SquadCollator:
                 for j in range(len(id) - 1, -1, -1):
                     if id[j].item() == self.thinkend_token_id:
                         labels[i, :j+2] = -100
+                        break
         elif not (self.use_reference or self.only_question):
             input_ids = input_ids[:, :-2]
             input_attention_mask = input_attention_mask[:, :-2]
