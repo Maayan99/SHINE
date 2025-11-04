@@ -441,7 +441,7 @@ def main(cfg: DictConfig):
     else:
         config.num_mem_token = cfg.num_mem_token
 
-    tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_from)
+    tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_from, padding_side="left")
     metamodel = MetaModelCls.from_pretrained(cfg.model.model_from, config=config)
     metamodel.reset_mem_tokens()
     metanetwork = Metanetwork(metamodel, cfg, metamodel.lora_params_numel(cfg.model.lora_r))
