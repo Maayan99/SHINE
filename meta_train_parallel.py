@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple, Any
 from functools import partial
 import numpy as np
+import math
 
 import torch
 import torch.nn.functional as F
@@ -679,6 +680,15 @@ def main(cfg: DictConfig):
             tmp_loss += loss.item() * valid_tokens * max(1, cfg.run.gradient_accumulation_steps)
             epoch_tokens += valid_tokens
             tmp_tokens += valid_tokens
+            if math.isinf(tmp_loss) or math.isnan(tmp_loss):
+                logger.info("NaN/Inf loss detected.")
+                logger.info(f"Batch:\n{batch}")
+                logger.info(f"loss: {loss}")
+                logger.info(f"Tmp loss: {tmp_loss}")
+                logger.info(f"Epoch loss: {epoch_loss}")
+                logger.info(f"Valid tokens: {valid_tokens}")
+                logger.info(f"Tmp tokens: {tmp_tokens}")
+                logger.info(f"Epoch tokens: {epoch_tokens}")
 
             if step % max(1, cfg.run.gradient_accumulation_steps) == 0 or step == len(train_loader):
                 if cfg.optim.grad_clip_norm and cfg.optim.grad_clip_norm > 0:

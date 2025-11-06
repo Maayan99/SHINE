@@ -31,7 +31,7 @@ optim:
 
 pretrain:
   completion_freq: 0.5
-  max_completion_ratio: 0.5
+  max_completion_ratio: 0.25
   min_completion_ratio: 0.01
 
 logging:
