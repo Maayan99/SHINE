@@ -11,13 +11,13 @@
 #SBATCH -e metalora.err
 
 
-NUM_GPUS=8
+NUM_GPUS=4
 MASTER_PORT=18900             
 CONFIG_NAME="Qwen3-8B"       
 SOURCE=transmla
 TRAIN_BATCH_SIZE=1
 TEST_BATCH_SIZE=2
-GRADIENT_ACCUMULATION_STEPS=8
+GRADIENT_ACCUMULATION_STEPS=16
 USE_GRADIENT_CHECKPOINT=False
 RESUME_GLOBAL_STEP=latest   # -1: don't resume,   int: resume from global steps,  latest: resume from latest
 

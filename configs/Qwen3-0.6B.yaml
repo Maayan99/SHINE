@@ -73,8 +73,8 @@ metanetwork:
 test:
   source: squad
   context_len: 512
-  max_length: 2048
-  max_new_tokens: 256
+  max_length: 4096
+  max_new_tokens: 1024
   save_path: test
   batch_size: 16
   num_workers: 4 
