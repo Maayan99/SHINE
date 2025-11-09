@@ -25,12 +25,13 @@ data:
 optim:
   learning_rate: 0.00005
   weight_decay: 0.01
-  num_epochs: 3
+  adapter_reg: 0.000001
+  num_epochs: 1
   warmup_steps: 100
   grad_clip_norm: 1.0
 
 pretrain:
-  completion_freq: 0.5
+  completion_freq: 0.0
   max_completion_ratio: 0.3
   min_completion_ratio: 0.1
 

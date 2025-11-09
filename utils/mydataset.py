@@ -73,7 +73,9 @@ class GroupedSquadDataset(Dataset):
         tokenizer,
         context_len: Optional[int] = None,
         sep: str = "\n\n",
+        name: str = "Test",
     ):
+        name = f"[GroupedSquadDataset: {name}]"
         self.tokenizer = tokenizer
         self.sep = sep
         self.context_len = context_len
@@ -100,8 +102,16 @@ class GroupedSquadDataset(Dataset):
             for ctx in ctx_list:
                 for ex_idx in text_to_idx[ctx]:
                     self.idx_to_groupidx[ex_idx] = group_idx
-                    
-        print(f"GroupedSquadDataset: {len(self.groups)} groups created from {len(data)} examples.")
+        
+        self.group_token_num = []
+        for group in self.groups:            
+            token_num = len(self.tokenizer(self.sep.join(group))["input_ids"])
+            self.group_token_num.append(token_num)
+            
+        print(f"{name}: {len(self.groups)} groups created from {len(data)} examples.")
+        print(f"{name}: Average group token length: {np.mean(self.group_token_num):.2f}, Max group token length: {np.max(self.group_token_num)}, Min group token length: {np.min(self.group_token_num)}")
+        print(f"{name}: Top 20 largest groups token lengths: {sorted(self.group_token_num, reverse=True)[:20]}")
+        print(f"{name}: Average contexts per group: {len(data) / len(self.groups):.2f}")
 
     def __len__(self):
         return len(self.data)

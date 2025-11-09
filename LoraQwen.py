@@ -336,8 +336,10 @@ class Qwen3PreTrainedModel(PreTrainedModel):
 class MemoryModelOutputWithPast(BaseModelOutputWithPast):
     '''
     memory_states: Optional[torch.Tensor] = None  # (batch_size, num_layer, num_mem_token, hidden_size)
+    reg_loss: Optional[torch.FloatTensor] = None
     '''
     memory_states: Optional[torch.Tensor] = None 
+    reg_loss: Optional[torch.FloatTensor] = None
 
 @auto_docstring
 class LoraQwen3Model(Qwen3PreTrainedModel):
@@ -524,8 +526,10 @@ class LoraQwen3Model(Qwen3PreTrainedModel):
 class MemoryCausalLMOutputWithPast(CausalLMOutputWithPast):
     '''
     memory_states: Optional[torch.Tensor] = None  # (batch_size, num_layer, num_mem_token, hidden_size)
+    reg_loss: Optional[torch.FloatTensor] = None
     '''
     memory_states: Optional[torch.Tensor] = None 
+    reg_loss: Optional[torch.FloatTensor] = None
 
 @auto_docstring
 class LoraQwen3ForCausalLM(Qwen3PreTrainedModel, GenerationMixin):

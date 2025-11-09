@@ -42,7 +42,9 @@ class MetanetworkTransformer(nn.Module):
 
         transformer_cfg = cfg.metanetwork.transformer_cfg
         self.transformer_layers = nn.ModuleList([nn.TransformerEncoderLayer(**transformer_cfg.encoder_cfg) for _ in range(transformer_cfg.num_layers)])
-
+        
+        self.scale = nn.Parameter(torch.ones((1, self.num_layers, self.num_mem_token, 1)), requires_grad=True)
+        # self.bias = nn.Parameter(torch.zeros((1, self.num_layers, self.num_mem_token, self.hidden_size)), requires_grad=True)
 
     def forward(self, memory_states:torch.Tensor) -> dict:
         '''
@@ -55,6 +57,7 @@ class MetanetworkTransformer(nn.Module):
                 memory_states = self.transformer_layers[i](memory_states.transpose(1, 2).flatten(0, 1)).unflatten(0, (batch_size, self.num_mem_token)).transpose(1, 2) # exchange information among layers
             else:
                 memory_states = self.transformer_layers[i](memory_states.flatten(0, 1)).unflatten(0, (batch_size, self.num_layers)) # exchange information among tokens
+        memory_states = memory_states * self.scale#  + self.bias
         return memory_states.flatten(1, -1)
 
 class Metanetwork(nn.Module):
@@ -63,6 +66,7 @@ class Metanetwork(nn.Module):
         self.lora_r = cfg.model.lora_r
         self.output_dim = output_dim
         self.metamodel = metamodel
+        self.adapter_reg = cfg.optim.adapter_reg
         if cfg.metanetwork.type == "transformer":
             self.metanetwork = MetanetworkTransformer(cfg)
             self.scale = cfg.metanetwork.transformer_cfg.scale
@@ -81,17 +85,18 @@ class Metanetwork(nn.Module):
         '''
         if use_metanet:
             assert metalora is not None, "metalora cannot be None when use_metanet is True"
-            loradict = self.generate_lora_dict(evidence_ids, evidence_attention_mask, metalora, use_gradient_checkpoint=use_gradient_checkpoint)
+            loradict, plain_output = self.generate_lora_dict(evidence_ids, evidence_attention_mask, metalora, use_gradient_checkpoint=use_gradient_checkpoint, return_plain=True)
             outputs = self.metamodel(input_ids=input_ids, attention_mask=input_attention_mask, loradict=loradict, labels=labels, ignore_mem_token=True, use_gradient_checkpoint=use_gradient_checkpoint, **kwargs)
+            outputs.reg_loss = self.adapter_reg * torch.abs(plain_output).sum()
         else:
             outputs = self.metamodel(input_ids=input_ids, attention_mask=input_attention_mask, labels=labels, ignore_mem_token=True, use_gradient_checkpoint=use_gradient_checkpoint, **kwargs)
         return outputs
     
-    def generate_lora_dict(self, evidence_ids, evidence_attention_mask, metalora, use_gradient_checkpoint = False) -> dict:
+    def generate_lora_dict(self, evidence_ids, evidence_attention_mask, metalora, use_gradient_checkpoint = False, return_plain = False) -> dict:
         outputs = self.metamodel(input_ids=evidence_ids, attention_mask=evidence_attention_mask, loradict=metalora, use_gradient_checkpoint=use_gradient_checkpoint)
         memory_states = outputs.memory_states
         plain_output = self.metanetwork(memory_states)  # (batch_size, output_dim)
         loradict = self.metamodel.generate_lora_dict(self.lora_r, scale=self.scale, plain_tensor=plain_output)
-        return loradict
+        return loradict if not return_plain else (loradict, plain_output)
         
     

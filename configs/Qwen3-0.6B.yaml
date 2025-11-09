@@ -25,6 +25,7 @@ data:
 optim:
   learning_rate: 0.00005
   weight_decay: 0.01
+  adapter_reg: 0.000001
   num_epochs: 1
   warmup_steps: 100
   grad_clip_norm: 0.0

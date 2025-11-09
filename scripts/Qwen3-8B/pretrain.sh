@@ -17,7 +17,7 @@ CONFIG_NAME="Qwen3-8B"
 SOURCE=transmla
 TRAIN_BATCH_SIZE=1
 TEST_BATCH_SIZE=2
-GRADIENT_ACCUMULATION_STEPS=16
+GRADIENT_ACCUMULATION_STEPS=8
 USE_GRADIENT_CHECKPOINT=False
 RESUME_GLOBAL_STEP=latest   # -1: don't resume,   int: resume from global steps,  latest: resume from latest
 

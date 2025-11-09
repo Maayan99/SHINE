@@ -11,13 +11,15 @@
 #SBATCH -e metalora.err
 
 
-NUM_GPUS=8
+NUM_GPUS=4
 MASTER_PORT=18900             
 CONFIG_NAME="Qwen3-8B"
 NUM_EPOCHS=3
 EVAL_STEPS=625
 SAVE_STEPS=625
 USE_GRADIENT_CHECKPOINT=False
+MAX_LEN=1152
+RESUME_GLOBAL_STEP=latest
 
 # Find available port
 while true; do
@@ -44,4 +46,6 @@ nohup torchrun \
     optim.num_epochs=$NUM_EPOCHS \
     eval.eval_steps=$EVAL_STEPS \
     save.save_steps=$SAVE_STEPS \
+    data.max_length=$MAX_LEN \
+    resume_global_step=$RESUME_GLOBAL_STEP \
     > tmp_metatrain.txt 2>&1 &

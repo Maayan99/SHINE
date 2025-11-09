@@ -386,8 +386,8 @@ def main(cfg: DictConfig):
                 logger.info(f"Saved {len(merged)} predictions to {out_path}")
 
         # ===== Generate answers on this split and save to JSON (DDP-safe) =====
-        # local_results = test(cfg, metanetwork, tokenizer, test_loader, use_metanet=True, use_amp=cfg.run.use_fp16, device=device, metalora=metalora)
-        # gather_and_save(local_results, ".json")
+        local_results = test(cfg, metanetwork, tokenizer, test_loader, use_metanet=True, use_amp=cfg.run.use_fp16, device=device, metalora=metalora)
+        gather_and_save(local_results, ".json")
         local_results_no_metanet = test(cfg, metanetwork, tokenizer, test_loader_no_metanet, use_metanet=False, use_amp=cfg.run.use_fp16, device=device)
         gather_and_save(local_results_no_metanet, "_no_metanet.json")
         local_results_only_question = test(cfg, metanetwork, tokenizer, test_loader_only_question, use_metanet=False, use_amp=cfg.run.use_fp16, device=device)

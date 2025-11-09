@@ -43,7 +43,7 @@ import logging
 from torch.utils.tensorboard import SummaryWriter
 from metanetwork_family import Metanetwork
 
-from utils.mydataset import TextDataset, create_mock_dataset, SquadDataset, SquadCollator, PretrainCollator
+from utils.mydataset import TextDataset, create_mock_dataset, SquadDataset, SquadCollator, PretrainCollator, GroupedSquadDataset
 from utils.myseed import set_seed
 from utils.mylogging import get_logger
 from utils.mysaveload import (
@@ -294,6 +294,7 @@ def evaluate(metanetwork_ddp_or_module, dataloader, device, use_amp: bool = Fals
         assert metalora is not None, "metalora cannot be None when use_metanet is True"
 
     total_loss = 0.0
+    total_reg_loss = 0.0
     n_tokens = 0
     if use_amp and device.type == "cuda":
         scaler_ctx = partial(torch.amp.autocast, device_type=str(device))
@@ -313,19 +314,23 @@ def evaluate(metanetwork_ddp_or_module, dataloader, device, use_amp: bool = Fals
                               evidence_ids=evidence_ids, evidence_attention_mask=evidence_attention_mask, 
                               labels=labels, use_metanet=use_metanet, metalora=metalora)
             loss = outputs.loss
+            reg_loss = outputs.reg_loss
 
         valid_tokens = (labels != -100).sum().item()
         total_loss += loss.item() * valid_tokens
+        total_reg_loss += reg_loss.item() * valid_tokens
         n_tokens += valid_tokens
 
     # Reduce across ranks
     if ddp_is_active():
-        t = torch.tensor([total_loss, n_tokens], dtype=torch.float64, device=device)
+        t = torch.tensor([total_loss, n_tokens, total_reg_loss], dtype=torch.float64, device=device)
         dist.all_reduce(t, op=dist.ReduceOp.SUM)
         total_loss = float(t[0].item())
         n_tokens = int(t[1].item())
+        total_reg_loss = float(t[2].item())
 
     avg_loss = total_loss / max(n_tokens, 1)
+    avg_reg_loss = total_reg_loss / max(n_tokens, 1)
     ppl = math.exp(avg_loss) if avg_loss < 20 else float("inf")
 
 
@@ -396,7 +401,7 @@ def evaluate(metanetwork_ddp_or_module, dataloader, device, use_amp: bool = Fals
     # dist.barrier()
 
     metanet.train()
-    return {"eval_loss": avg_loss, "perplexity": ppl}
+    return {"eval_loss": avg_loss, "perplexity": ppl, "eval_reg_loss": avg_reg_loss}
 
 
 @hydra.main(version_base=None, config_path="configs")
@@ -405,6 +410,8 @@ def main(cfg: DictConfig):
     torch.set_float32_matmul_precision('high')
     if cfg.run.use_gradient_checkpoint: 
         torch._dynamo.config.optimize_ddp = False
+    if cfg.mode == "train":
+        os.environ["TOKENIZERS_PARALLELISM"] = "false"
     
     # ========= DDP init (safe for single-process) =========
     ddp_init_if_needed()
@@ -568,8 +575,10 @@ def main(cfg: DictConfig):
         # num_rows: 87599
         train_dataset = load_dataset(os.path.join("data", "squad"), split="train")
         val_dataset = load_dataset(os.path.join("data", "squad"), split="validation")
-        train_ds = SquadDataset(train_dataset, tokenizer)
-        val_ds = SquadDataset(val_dataset, tokenizer)
+        # train_ds = SquadDataset(train_dataset, tokenizer)
+        # val_ds = SquadDataset(val_dataset, tokenizer)
+        train_ds = GroupedSquadDataset(train_dataset, tokenizer, 512, name="Train")
+        val_ds = GroupedSquadDataset(val_dataset, tokenizer, 512, name="Validation")
         collator = SquadCollator(tokenizer=tokenizer, max_length=cfg.data.max_length, metatrain=True)
     else:
         raise ValueError(f"Unknown data source: {cfg.data.source}")
@@ -667,17 +676,19 @@ def main(cfg: DictConfig):
                 outputs = ddp_metanet(input_ids=input_ids, input_attention_mask=input_attention_mask, 
                                       evidence_ids=evidence_ids, evidence_attention_mask=evidence_attention_mask, 
                                       labels=labels, metalora=metalora, use_gradient_checkpoint=cfg.run.use_gradient_checkpoint)
-                loss = outputs.loss / max(1, cfg.run.gradient_accumulation_steps)
+                loss = (outputs.loss / max(1, cfg.run.gradient_accumulation_steps)).item()
+                reg_loss = (outputs.reg_loss / max(1, cfg.run.gradient_accumulation_steps)).item()
+                backward_loss = (outputs.loss + outputs.reg_loss) / max(1, cfg.run.gradient_accumulation_steps)
 
             if writer is not None:
                 writer.add_scalar("train/lr", lr_scheduler.get_last_lr()[0], global_step)
 
-            scaler.scale(loss).backward()
+            scaler.scale(backward_loss).backward()
 
             valid_tokens = (labels != -100).sum().item()
             # Track per-rank; we’ll reduce for logging only
-            epoch_loss += loss.item() * valid_tokens * max(1, cfg.run.gradient_accumulation_steps)
-            tmp_loss += loss.item() * valid_tokens * max(1, cfg.run.gradient_accumulation_steps)
+            epoch_loss += loss * valid_tokens * max(1, cfg.run.gradient_accumulation_steps)
+            tmp_loss += loss * valid_tokens * max(1, cfg.run.gradient_accumulation_steps)
             epoch_tokens += valid_tokens
             tmp_tokens += valid_tokens
             if math.isinf(tmp_loss) or math.isnan(tmp_loss):
@@ -718,6 +729,8 @@ def main(cfg: DictConfig):
                     tmp_loss_local = (tmp_loss / max(tmp_tokens, 1))
                     avg_loss_world = distributed_mean(avg_loss_local, device)
                     tmp_loss_world = distributed_mean(tmp_loss_local, device)
+                    tmp_loss_reg_local = (reg_loss / max(tmp_tokens, 1))
+                    tmp_loss_reg_world = distributed_mean(tmp_loss_reg_local, device)
                     if is_main_process():
                         avg_ppl = math.exp(avg_loss_world) if avg_loss_world < 20 else float("inf")
                         tmp_ppl = math.exp(tmp_loss_world) if tmp_loss_world < 20 else float("inf")
@@ -727,10 +740,12 @@ def main(cfg: DictConfig):
                             writer.add_scalar("train/epoch_avg_ppl", avg_ppl, global_step)
                             writer.add_scalar("train/tmp_loss", tmp_loss_world, global_step)
                             writer.add_scalar("train/tmp_ppl", tmp_ppl, global_step)
+                            writer.add_scalar("train/tmp_reg_loss", tmp_loss_reg_world, global_step)
                         if isinstance(pbar, tqdm):
                             pbar.set_postfix({"lr": lr_scheduler.get_last_lr()[0],
                                             "epoch_avg_loss": f"{avg_loss_world:.4f}", "epoch_avg_ppl": f"{avg_ppl:.2f}",
-                                            "tmp_loss": f"{tmp_loss_world:.4f}", "tmp_ppl": f"{tmp_ppl:.2f}"})
+                                            "tmp_loss": f"{tmp_loss_world:.4f}", "tmp_ppl": f"{tmp_ppl:.2f}",
+                                            "tmp_reg_loss": f"{tmp_loss_reg_world:.8f}"})
                     tmp_loss = 0.0
                     tmp_tokens = 0
 
