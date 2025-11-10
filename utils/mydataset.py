@@ -137,7 +137,6 @@ class PretrainCollator:
         self.completion_freq = self.cfg.pretrain.completion_freq
         self.max_completion_ratio = self.cfg.pretrain.max_completion_ratio
         self.min_completion_ratio = self.cfg.pretrain.min_completion_ratio
-        self.left_truncation_tokenizer = AutoTokenizer.from_pretrained(self.cfg.model.tokenizer_from, padding_side="left", truncation_side="left")
     
     def split_text(self, text):
         t = text.split()
@@ -156,6 +155,7 @@ class PretrainCollator:
             left, right = t[:1], t[1:]
         
         return ' '.join(left), ' '.join(right)
+    
 
     def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
         texts = [ex["text"] for ex in batch]
@@ -165,39 +165,29 @@ class PretrainCollator:
             if t < self.completion_freq:
                 splits = [self.split_text(text) for text in texts]
                 evidence_texts = [split[0] for split in splits]
-                answer_texts = [split[1] for split in splits]
+                answer_texts = texts
+                # answer_texts = [split[1] for split in splits]
                 messages = [[
-                    {"role": "system", "content": "You are a concise assistant. Only output the final answer with no extra words."},
-                    {"role": "user", "content": f"Please complete what you have read."},
-                    {"role": "assistant", "content": f"<think>I know the answer because I have read something about this.</think>\n{answer}"}
+                    {"role": "user", "content": f"<COMP>"},
+                    {"role": "assistant", "content": f"{answer}"}
                 ] for answer in answer_texts]
             else:
                 evidence_texts = texts
                 answer_texts = texts
                 messages = [[
-                    {"role": "system", "content": "You are a concise assistant. Only output the final answer with no extra words."},
-                    {"role": "user", "content": f"Please repeat what you have read."},
-                    {"role": "assistant", "content": f"<think>I know the answer because I have read something about this.</think>\n{answer}"}
+                    {"role": "user", "content": f"<RECON>"},
+                    {"role": "assistant", "content": f"{answer}"}
                 ] for answer in answer_texts]
         else:
             raise NotImplementedError("metatrain=False mode is not implemented in PretrainCollator.")
 
-        if t < self.completion_freq:
-            evidence_enc = self.left_truncation_tokenizer(
-                evidence_texts,
-                max_length=self.max_length,
-                truncation=True,
-                return_tensors="pt",
-                padding="max_length",
-            )
-        else:
-            evidence_enc = self.tokenizer(
-                evidence_texts,
-                max_length=self.max_length,
-                truncation=True,
-                return_tensors="pt",
-                padding="max_length",
-            )
+        evidence_enc = self.tokenizer(
+            evidence_texts,
+            max_length=self.max_length,
+            truncation=True,
+            return_tensors="pt",
+            padding="max_length",
+        )
         evidence_ids = evidence_enc["input_ids"]
         evidence_attention_mask = evidence_enc["attention_mask"]
         answer_enc = self.tokenizer(
@@ -220,6 +210,7 @@ class PretrainCollator:
                 truncation=True,
                 return_dict=True,
                 padding="max_length",
+                enable_thinking=False,
             )
         input_ids = input_enc["input_ids"]
         input_attention_mask = input_enc["attention_mask"]
@@ -245,14 +236,15 @@ class PretrainCollator:
             #     exit()
             assert evidence_ids[i][-1].item() != self.tokenizer.pad_token_id, "Evidence evidence is all padding!"
         
+        # res = "input"
         # tokens = self.tokenizer.convert_ids_to_tokens(input_ids[0])
         # for i, t in enumerate(tokens):
-        #     print(f"{i}: token_ids: {t} attention_mask: {input_attention_mask[0][i]} label: {labels[0][i] if labels is not None else 'N/A'}")
-        # exit()
-        
+        #     res = f"{res}\n{i}: token_ids: {t} attention_mask: {input_attention_mask[0][i]} label: {labels[0][i] if labels is not None else 'N/A'}"
+        # res = f"{res}\nevidence"
         # tokens = self.tokenizer.convert_ids_to_tokens(evidence_ids[0])
         # for i, t in enumerate(tokens):
-        #     print(f"{i}: token_ids: {t} attention_mask: {evidence_attention_mask[0][i]}")
+        #     res = f"{res}\n{i}: token_ids: {t} attention_mask: {evidence_attention_mask[0][i]}"
+        # print(res)
         # exit()
         
         # # Debug print for the first item

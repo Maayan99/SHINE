@@ -74,10 +74,7 @@ from typing import Optional, Union, Mapping, Sequence
 logger = get_logger("metalora")
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 torch.backends.cuda.matmul.allow_tf32 = True
-# Disable Flash/SDP kernels that can spike workspace memory
-torch.backends.cuda.enable_flash_sdp(False)
-torch.backends.cuda.enable_mem_efficient_sdp(False)
-torch.backends.cuda.enable_math_sdp(True)
+torch.backends.cudnn.allow_tf32 = True
 
 # @torch.no_grad()
 # def generate_stepwise(
@@ -300,25 +297,31 @@ def evaluate(metanetwork_ddp_or_module, dataloader, device, use_amp: bool = Fals
     total_loss = 0.0
     total_reg_loss = 0.0
     n_tokens = 0
-    if use_amp and device.type == "cuda":
-        scaler_ctx = partial(torch.amp.autocast, device_type="cuda")
-    else:
-        from contextlib import nullcontext
-        scaler_ctx = nullcontext
-
+    amp_ctx = torch.amp.autocast(
+            device_type="cuda",
+            dtype=(amp_dtype or torch.bfloat16),
+            enabled=(use_amp and device.type == "cuda")
+        )
+    
     for batch in dataloader:
         input_ids = batch["input_ids"].to(device, non_blocking=True)
         input_attention_mask = batch["input_attention_mask"].to(device, non_blocking=True)
         labels = batch["labels"].to(device, non_blocking=True)
         evidence_ids = batch["evidence_ids"].to(device, non_blocking=True)
         evidence_attention_mask = batch["evidence_attention_mask"].to(device, non_blocking=True)
-
-        with scaler_ctx():
-            outputs = metanet(input_ids=input_ids, input_attention_mask=input_attention_mask, 
-                              evidence_ids=evidence_ids, evidence_attention_mask=evidence_attention_mask, 
-                              labels=labels, use_metanet=use_metanet, metalora=metalora)
-            loss = outputs.loss
-            reg_loss = outputs.reg_loss
+        
+        with amp_ctx:
+            outputs = metanet(
+                input_ids=input_ids,
+                input_attention_mask=input_attention_mask,
+                evidence_ids=evidence_ids,
+                evidence_attention_mask=evidence_attention_mask,
+                labels=labels,
+                use_metanet=use_metanet,
+                metalora=metalora,
+            )
+        loss = outputs.loss
+        reg_loss = outputs.reg_loss
 
         valid_tokens = (labels != -100).sum().item()
         total_loss += loss.item() * valid_tokens
@@ -410,7 +413,7 @@ def evaluate(metanetwork_ddp_or_module, dataloader, device, use_amp: bool = Fals
 
 @hydra.main(version_base=None, config_path="configs")
 def main(cfg: DictConfig):
-    amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    amp_dtype = torch.bfloat16
     
     torch.set_float32_matmul_precision('high')
     if cfg.run.use_gradient_checkpoint: 
@@ -455,8 +458,10 @@ def main(cfg: DictConfig):
         config.num_mem_token = cfg.num_mem_token
 
     tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_from, padding_side="left")
+    tokenizer.add_tokens(['<RECON>', '<COMP>'])
     metamodel = MetaModelCls.from_pretrained(cfg.model.model_from, config=config)
     metamodel.reset_mem_tokens()
+    metamodel.resize_token_embeddings(len(tokenizer))
     metanetwork = Metanetwork(metamodel, cfg, metamodel.lora_params_numel(cfg.model.lora_r))
     metanetwork.train()
     metanetwork.to(device)
@@ -621,7 +626,7 @@ def main(cfg: DictConfig):
     )
 
     
-    optimizer, lr_scheduler, scaler = init_optimize(grouped_params, train_loader, cfg, device)
+    optimizer, lr_scheduler = init_optimize(grouped_params, train_loader, cfg, device)
 
     # Only main process writes TB logs
     tb_log_dir = os.path.join(hydra_run_dir, "tensorboard")
@@ -679,8 +684,8 @@ def main(cfg: DictConfig):
             with torch.amp.autocast(enabled=(cfg.run.use_amp and device.type == "cuda"), device_type="cuda", dtype=amp_dtype):
                 # Forward through possibly DDP-wrapped metanetwork
                 outputs = ddp_metanet(input_ids=input_ids, input_attention_mask=input_attention_mask, 
-                                      evidence_ids=evidence_ids, evidence_attention_mask=evidence_attention_mask, 
-                                      labels=labels, metalora=metalora, use_gradient_checkpoint=cfg.run.use_gradient_checkpoint)
+                                    evidence_ids=evidence_ids, evidence_attention_mask=evidence_attention_mask, 
+                                    labels=labels, metalora=metalora, use_gradient_checkpoint=cfg.run.use_gradient_checkpoint)
                 loss = (outputs.loss / max(1, cfg.run.gradient_accumulation_steps)).item()
                 reg_loss = (outputs.reg_loss / max(1, cfg.run.gradient_accumulation_steps)).item()
                 backward_loss = (outputs.loss + outputs.reg_loss) / max(1, cfg.run.gradient_accumulation_steps)
@@ -688,7 +693,7 @@ def main(cfg: DictConfig):
             if writer is not None:
                 writer.add_scalar("train/lr", lr_scheduler.get_last_lr()[0], global_step)
 
-            scaler.scale(backward_loss).backward()
+            backward_loss.backward()
 
             valid_tokens = (labels != -100).sum().item()
             # Track per-rank; we’ll reduce for logging only
@@ -708,7 +713,6 @@ def main(cfg: DictConfig):
 
             if step % max(1, cfg.run.gradient_accumulation_steps) == 0 or step == len(train_loader):
                 if cfg.optim.grad_clip_norm and cfg.optim.grad_clip_norm > 0:
-                    scaler.unscale_(optimizer)
                     for group in optimizer.param_groups:
                         # # ---- Compute and print grad norm BEFORE clipping ----
                         # total_norm = 0.0
@@ -721,8 +725,7 @@ def main(cfg: DictConfig):
                         # # ------------------------------------------------------
                         torch.nn.utils.clip_grad_norm_(group["params"], cfg.optim.grad_clip_norm)
 
-                scaler.step(optimizer)
-                scaler.update()
+                optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
                 lr_scheduler.step()
                 global_step += 1
@@ -848,17 +851,17 @@ def main(cfg: DictConfig):
         if ddp_is_active():
             dist.barrier()
     
-    # # Initial eval
-    # if resume_dir is None:
-    #     init_eval_without_metanetwork = evaluate(ddp_metanet, val_loader, device, use_amp=cfg.run.use_amp, use_metanet=False, amp_dtype=amp_dtype)
-    #     if is_main_process():
-    #         logger.info(f"[without lora] loss={init_eval_without_metanetwork['eval_loss']:.4f} ppl={init_eval_without_metanetwork['perplexity']:.2f}")
-    # init_eval = evaluate(ddp_metanet, val_loader, device, use_amp=cfg.run.use_amp, metalora=metalora, amp_dtype=amp_dtype)
-    # if writer is not None:
-    #     writer.add_scalar("eval/loss", init_eval["eval_loss"], global_step)
-    #     writer.add_scalar("eval/ppl", init_eval["perplexity"], global_step)
-    # if is_main_process():
-    #     logger.info(f"[Eval @ step {global_step}] loss={init_eval['eval_loss']:.4f} ppl={init_eval['perplexity']:.2f}")
+    # Initial eval
+    if resume_dir is None:
+        init_eval_without_metanetwork = evaluate(ddp_metanet, val_loader, device, use_amp=cfg.run.use_amp, use_metanet=False, amp_dtype=amp_dtype)
+        if is_main_process():
+            logger.info(f"[without lora] loss={init_eval_without_metanetwork['eval_loss']:.4f} ppl={init_eval_without_metanetwork['perplexity']:.2f}")
+    init_eval = evaluate(ddp_metanet, val_loader, device, use_amp=cfg.run.use_amp, metalora=metalora, amp_dtype=amp_dtype)
+    if writer is not None:
+        writer.add_scalar("eval/loss", init_eval["eval_loss"], global_step)
+        writer.add_scalar("eval/ppl", init_eval["perplexity"], global_step)
+    if is_main_process():
+        logger.info(f"[Eval @ step {global_step}] loss={init_eval['eval_loss']:.4f} ppl={init_eval['perplexity']:.2f}")
 
     # Main training epochs
     for epoch in range(1, cfg.optim.num_epochs + 1):

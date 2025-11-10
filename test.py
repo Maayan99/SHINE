@@ -124,11 +124,6 @@ def test(cfg, metanetwork_ddp_or_module, tokenizer, testloader, use_metanet: boo
     # Handle both wrapped and unwrapped metanetwork
     metanet = metanetwork_ddp_or_module.module if isinstance(metanetwork_ddp_or_module, DDP) else metanetwork_ddp_or_module
     metanet.eval()
-    if use_amp and device.type == "cuda":
-        scaler_ctx = partial(torch.amp.autocast, device_type=str(device), amp_dtype=amp_dtype)
-    else:
-        from contextlib import nullcontext
-        scaler_ctx = nullcontext
     
     results = []
     # gen_kwargs = {
@@ -154,35 +149,34 @@ def test(cfg, metanetwork_ddp_or_module, tokenizer, testloader, use_metanet: boo
         questions = batch["questions"]
         labels = None if batch["labels"] is None else batch["labels"].to(device, non_blocking=True)
 
-        with scaler_ctx():
-            loradict = None
-            if use_metanet:
-                # Produce LoRA dict from the MetaNetwork
-                loradict = metanet.generate_lora_dict(evidence_ids=evidence_ids, evidence_attention_mask=evidence_attention_mask, metalora=metalora)
-            gen_out = metanet.metamodel.generate(
-                input_ids=input_ids,
-                attention_mask=input_attention_mask,
-                loradict=loradict,
-                ignore_mem_token=True,
-                max_new_tokens=1000,
-                do_sample=False,
-                # return_dict_in_generate=True,
-                # output_scores=True
-            )
-            input_lens = input_attention_mask.sum(dim=1).tolist()
-            
-            # gen_out = generate_stepwise(
-            #     model=metanet.metamodel,
-            #     input_ids=input_ids,
-            #     attention_mask=input_attention_mask,
-            #     loradict=loradict,
-            #     ignore_mem_token=True,
-            #     max_new_tokens=1000,
-            #     do_sample=False,
-            #     tokenizer=tokenizer,
-            #     device=device,
-            # )
-            # input_lens = input_attention_mask.sum(dim=1).tolist()
+        loradict = None
+        if use_metanet:
+            # Produce LoRA dict from the MetaNetwork
+            loradict = metanet.generate_lora_dict(evidence_ids=evidence_ids, evidence_attention_mask=evidence_attention_mask, metalora=metalora)
+        gen_out = metanet.metamodel.generate(
+            input_ids=input_ids,
+            attention_mask=input_attention_mask,
+            loradict=loradict,
+            ignore_mem_token=True,
+            max_new_tokens=1000,
+            do_sample=False,
+            # return_dict_in_generate=True,
+            # output_scores=True
+        )
+        input_lens = input_attention_mask.sum(dim=1).tolist()
+        
+        # gen_out = generate_stepwise(
+        #     model=metanet.metamodel,
+        #     input_ids=input_ids,
+        #     attention_mask=input_attention_mask,
+        #     loradict=loradict,
+        #     ignore_mem_token=True,
+        #     max_new_tokens=1000,
+        #     do_sample=False,
+        #     tokenizer=tokenizer,
+        #     device=device,
+        # )
+        # input_lens = input_attention_mask.sum(dim=1).tolist()
 
         # scores = torch.stack(gen_out.scores)  # [seq_len, batch, vocab]
         # probs = F.softmax(scores, dim=-1)

@@ -11,8 +11,5 @@ def init_optimize(grouped_params, train_loader, cfg, device):
         num_warmup_steps=cfg.optim.warmup_steps,
         num_training_steps=total_steps,
     )
-
-    # AMP scaler
-    scaler = torch.amp.GradScaler(enabled=(cfg.run.use_amp and device.type == "cuda"))
     
-    return optimizer, lr_scheduler, scaler
+    return optimizer, lr_scheduler
