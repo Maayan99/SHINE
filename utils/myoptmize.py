@@ -13,6 +13,6 @@ def init_optimize(grouped_params, train_loader, cfg, device):
     )
 
     # AMP scaler
-    scaler = torch.amp.GradScaler(enabled=(cfg.run.use_fp16 and device.type == "cuda"))
+    scaler = torch.amp.GradScaler(enabled=(cfg.run.use_amp and device.type == "cuda"))
     
     return optimizer, lr_scheduler, scaler

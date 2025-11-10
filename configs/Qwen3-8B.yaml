@@ -5,7 +5,7 @@ test_global_step: latest # int: test at global steps,  latest: test at latest
 
 run:
   seed: 42
-  use_fp16: false              # set false to disable AMP, or use bf16 if you extend it
+  use_amp: true              # set false to disable AMP, or use bf16 if you extend it
   gradient_accumulation_steps: 8
   device: cuda                # auto | cuda | cpu
   use_gradient_checkpoint: false
@@ -15,7 +15,7 @@ paths:
   output_dir: "qwen-finetuned"   # final save; checkpoints go under Hydra's run dir unless overridden
 
 data:
-  max_length: 1024
+  max_length: 128
   train_batch_size: 1
   eval_batch_size: 2
   num_workers: 4

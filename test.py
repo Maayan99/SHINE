@@ -73,6 +73,7 @@ import re
 
 logger = get_logger("test")
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+torch.backends.cuda.matmul.allow_tf32 = True
 
 
 def extract_think_and_answer(text: str) -> Tuple[str, str]:
@@ -116,7 +117,7 @@ def extract_think_and_answer(text: str) -> Tuple[str, str]:
 
 
 @torch.no_grad()
-def test(cfg, metanetwork_ddp_or_module, tokenizer, testloader, use_metanet: bool = True, metalora: Any = None, use_amp: bool = False, device: torch.device = 'cuda') -> Dict[str, float]:
+def test(cfg, metanetwork_ddp_or_module, tokenizer, testloader, use_metanet: bool = True, metalora: Any = None, use_amp: bool = False, device: torch.device = 'cuda', amp_dtype=None) -> Dict[str, float]:
     if use_metanet:
         assert metalora is not None, "metalora cannot be None when use_metanet is True"
     
@@ -124,7 +125,7 @@ def test(cfg, metanetwork_ddp_or_module, tokenizer, testloader, use_metanet: boo
     metanet = metanetwork_ddp_or_module.module if isinstance(metanetwork_ddp_or_module, DDP) else metanetwork_ddp_or_module
     metanet.eval()
     if use_amp and device.type == "cuda":
-        scaler_ctx = partial(torch.amp.autocast, device_type=str(device))
+        scaler_ctx = partial(torch.amp.autocast, device_type=str(device), amp_dtype=amp_dtype)
     else:
         from contextlib import nullcontext
         scaler_ctx = nullcontext
@@ -386,11 +387,12 @@ def main(cfg: DictConfig):
                 logger.info(f"Saved {len(merged)} predictions to {out_path}")
 
         # ===== Generate answers on this split and save to JSON (DDP-safe) =====
-        local_results = test(cfg, metanetwork, tokenizer, test_loader, use_metanet=True, use_amp=cfg.run.use_fp16, device=device, metalora=metalora)
+        amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        local_results = test(cfg, metanetwork, tokenizer, test_loader, use_metanet=True, use_amp=cfg.run.use_amp, device=device, metalora=metalora, amp_dtype=amp_dtype)
         gather_and_save(local_results, ".json")
-        local_results_no_metanet = test(cfg, metanetwork, tokenizer, test_loader_no_metanet, use_metanet=False, use_amp=cfg.run.use_fp16, device=device)
+        local_results_no_metanet = test(cfg, metanetwork, tokenizer, test_loader_no_metanet, use_metanet=False, use_amp=cfg.run.use_amp, device=device, amp_dtype=amp_dtype)
         gather_and_save(local_results_no_metanet, "_no_metanet.json")
-        local_results_only_question = test(cfg, metanetwork, tokenizer, test_loader_only_question, use_metanet=False, use_amp=cfg.run.use_fp16, device=device)
+        local_results_only_question = test(cfg, metanetwork, tokenizer, test_loader_only_question, use_metanet=False, use_amp=cfg.run.use_amp, device=device, amp_dtype=amp_dtype)
         gather_and_save(local_results_only_question, "_only_question.json")
         
         

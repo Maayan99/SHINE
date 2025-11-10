@@ -73,7 +73,11 @@ from typing import Optional, Union, Mapping, Sequence
 
 logger = get_logger("metalora")
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
+torch.backends.cuda.matmul.allow_tf32 = True
+# Disable Flash/SDP kernels that can spike workspace memory
+torch.backends.cuda.enable_flash_sdp(False)
+torch.backends.cuda.enable_mem_efficient_sdp(False)
+torch.backends.cuda.enable_math_sdp(True)
 
 # @torch.no_grad()
 # def generate_stepwise(
@@ -136,9 +140,9 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 #     past_key_values = None
 #     amp_ctx = (
-#         torch.amp.autocast(device_type=str(device.type))
+#         torch.amp.autocast(device_type="cuda")
 #         if (use_amp and device.type in ("cuda", "mps"))
-#         else torch.amp.autocast(enabled=False, device_type=str(device))
+#         else torch.amp.autocast(enabled=False, device_type="cpu")
 #     )
 
 #     def apply_repetition_penalty_(
@@ -285,7 +289,7 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 #     return generated
 
 @torch.no_grad()
-def evaluate(metanetwork_ddp_or_module, dataloader, device, use_amp: bool = False, use_metanet: bool = True, metalora: Optional[torch.Tensor] = None) -> Dict[str, float]:
+def evaluate(metanetwork_ddp_or_module, dataloader, device, use_amp: bool = False, use_metanet: bool = True, metalora: Optional[torch.Tensor] = None, amp_dtype=None) -> Dict[str, float]:
     # Handle both wrapped and unwrapped metanetwork
     metanet = metanetwork_ddp_or_module.module if isinstance(metanetwork_ddp_or_module, DDP) else metanetwork_ddp_or_module
     metanet.eval()
@@ -297,7 +301,7 @@ def evaluate(metanetwork_ddp_or_module, dataloader, device, use_amp: bool = Fals
     total_reg_loss = 0.0
     n_tokens = 0
     if use_amp and device.type == "cuda":
-        scaler_ctx = partial(torch.amp.autocast, device_type=str(device))
+        scaler_ctx = partial(torch.amp.autocast, device_type="cuda")
     else:
         from contextlib import nullcontext
         scaler_ctx = nullcontext
@@ -406,6 +410,7 @@ def evaluate(metanetwork_ddp_or_module, dataloader, device, use_amp: bool = Fals
 
 @hydra.main(version_base=None, config_path="configs")
 def main(cfg: DictConfig):
+    amp_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     
     torch.set_float32_matmul_precision('high')
     if cfg.run.use_gradient_checkpoint: 
@@ -671,7 +676,7 @@ def main(cfg: DictConfig):
             evidence_ids = batch["evidence_ids"].to(device, non_blocking=True)
             evidence_attention_mask = batch["evidence_attention_mask"].to(device, non_blocking=True)
 
-            with torch.amp.autocast(enabled=(cfg.run.use_fp16 and device.type == "cuda"), device_type=str(device)):
+            with torch.amp.autocast(enabled=(cfg.run.use_amp and device.type == "cuda"), device_type="cuda", dtype=amp_dtype):
                 # Forward through possibly DDP-wrapped metanetwork
                 outputs = ddp_metanet(input_ids=input_ids, input_attention_mask=input_attention_mask, 
                                       evidence_ids=evidence_ids, evidence_attention_mask=evidence_attention_mask, 
@@ -775,12 +780,15 @@ def main(cfg: DictConfig):
 
                 # ---- Eval + best checkpoint ----
                 if getattr(cfg.eval, "eval_steps", 0) and global_step % cfg.eval.eval_steps == 0:
-                    eval_metrics = evaluate(ddp_metanet, val_loader, device, use_amp=cfg.run.use_fp16, metalora=metalora)
+                    eval_metrics = evaluate(ddp_metanet, val_loader, device, use_amp=cfg.run.use_amp, metalora=metalora, amp_dtype=amp_dtype)
                     if writer is not None:
                         writer.add_scalar("eval/loss", eval_metrics["eval_loss"], global_step)
                         writer.add_scalar("eval/ppl", eval_metrics["perplexity"], global_step)
                     if is_main_process():
                         logger.info(f"[Eval @ step {global_step}] loss={eval_metrics['eval_loss']:.4f} ppl={eval_metrics['perplexity']:.2f}")
+                        # see scale
+                        torch.set_printoptions(threshold=float('inf'))
+                        logger.info(f"\n{ddp_metanet.module.metanetwork.scale.data[0,:,:,0]}")
 
                     # # Best checkpoint saving on rank 0
                     # if getattr(cfg.save, "save_best", True) and is_main_process():
@@ -812,7 +820,7 @@ def main(cfg: DictConfig):
         if is_main_process():
             logger.info(f"Epoch {epoch} done. train_loss={avg_epoch_loss_world:.4f} train_ppl={epoch_ppl:.2f}")
 
-        eval_metrics = evaluate(ddp_metanet, val_loader, device, use_amp=cfg.run.use_fp16, metalora=metalora)
+        eval_metrics = evaluate(ddp_metanet, val_loader, device, use_amp=cfg.run.use_amp, metalora=metalora, amp_dtype=amp_dtype)
         if writer is not None:
             writer.add_scalar("eval/loss", eval_metrics["eval_loss"], global_step)
             writer.add_scalar("eval/ppl", eval_metrics["perplexity"], global_step)
@@ -842,10 +850,10 @@ def main(cfg: DictConfig):
     
     # # Initial eval
     # if resume_dir is None:
-    #     init_eval_without_metanetwork = evaluate(ddp_metanet, val_loader, device, use_amp=cfg.run.use_fp16, use_metanet=False)
+    #     init_eval_without_metanetwork = evaluate(ddp_metanet, val_loader, device, use_amp=cfg.run.use_amp, use_metanet=False, amp_dtype=amp_dtype)
     #     if is_main_process():
     #         logger.info(f"[without lora] loss={init_eval_without_metanetwork['eval_loss']:.4f} ppl={init_eval_without_metanetwork['perplexity']:.2f}")
-    # init_eval = evaluate(ddp_metanet, val_loader, device, use_amp=cfg.run.use_fp16, metalora=metalora)
+    # init_eval = evaluate(ddp_metanet, val_loader, device, use_amp=cfg.run.use_amp, metalora=metalora, amp_dtype=amp_dtype)
     # if writer is not None:
     #     writer.add_scalar("eval/loss", init_eval["eval_loss"], global_step)
     #     writer.add_scalar("eval/ppl", init_eval["perplexity"], global_step)
