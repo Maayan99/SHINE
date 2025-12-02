@@ -53,4 +53,4 @@ nohup torchrun \
     resume_global_step=$RESUME_GLOBAL_STEP \
     data.source=$SOURCE \
     optim.warmup_steps=$WARMUP_STEPS \
-    > tmp_metatrain.txt 2>&1 &
+    > tmp_metatrain_$NAME.txt 2>&1 &

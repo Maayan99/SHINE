@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pyexpat.errors import messages
 import re
 from typing import Dict, List, Tuple, Any
 
@@ -46,7 +47,7 @@ def create_mock_dataset() -> Tuple[List[str], List[str]]:
 # Dataset
 # ---------------------------
 class TextDataset(Dataset):
-    def __init__(self, texts: List[str], tokenizer, max_length: int = 512):
+    def __init__(self, texts: List[str], tokenizer):
         self.texts = texts
         self.tokenizer = tokenizer
 
@@ -55,6 +56,51 @@ class TextDataset(Dataset):
 
     def __getitem__(self, idx) -> Dict[str, Any]:
         return {"text": str(self.texts[idx])}
+    
+class GroupTextDataset(Dataset):
+    def __init__(self, texts, tokenizer, conversation_max_len, cache_dir):
+        self.texts = texts
+        self.tokenizer = tokenizer
+        self.conversation_max_len = conversation_max_len
+        self.cache_dir = cache_dir
+        
+        # Try find cache
+        pass
+    
+        # If not find, get group
+        test_q = "who is adam ?"
+        test_a = "I don't know"
+        message_1 = [{"role": "user", "content": f"{test_q}"}, {"role": "assistant", "content": f"{test_a}"}]
+        input_enc_1 = self.tokenizer.apply_chat_template(
+                message_1,
+                add_generation_prompt=False,   # adds the assistant turn start
+                tokenize=True,
+                return_tensors="pt",
+                return_dict=True,
+                enable_thinking=False,
+            )
+        len1 = len(input_enc_1["input_ids"])
+        message_2 = message_1 * 2
+        input_enc_2 = self.tokenizer.apply_chat_template(
+                message_2,
+                add_generation_prompt=False,   # adds the assistant turn start
+                tokenize=True,
+                return_tensors="pt",
+                return_dict=True,
+                enable_thinking=False,
+            )
+        len2 = len(input_enc_2["input_ids"])
+        len3 = len(self.tokenizer.tokenize(test_q)) + len(self.tokenizer.tokenize(test_a))
+        self.base_len = len1 * 2 - len2
+        self.chat_len = len1 - len3 - self.base_len
+        
+        
+        
+    def __len__(self):
+        pass
+    
+    def __getitem__(self, idx) -> Dict[str, Any]:
+        pass
 
 class SquadDataset(Dataset):
     def __init__(self, data: List[Dict[str, Any]], tokenizer):

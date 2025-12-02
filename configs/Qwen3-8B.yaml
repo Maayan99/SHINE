@@ -51,7 +51,7 @@ save:
 # Otherwise, replace with a transformers model import path and update train.py accordingly.
 model:
   lora_r: 4
-  metalora_r: 16
+  metalora_r: 4
   num_mem_token: ${num_mem_token}
   metamodel_class_path: "LoraQwen.LoraQwen3ForCausalLM" # module.ClassName
   config_class_path: "LoraQwen.Qwen3Config" # module.ClassName
@@ -70,11 +70,20 @@ metanetwork:
       layer_norm_eps: 0.00001
       batch_first: True
       norm_first: False
-      bias: false
+      bias: True
     mean_pool_size: 1 # Don't use
-    use_final_bias: false
     num_layers: 6 # Must be even
     scale: 0.001
+  linear_cfg:
+    num_layers: 4
+    linear_hidden_dim: 8192
+    scale: 0.001
+    bias: false
+  linear_gate_cfg:
+    num_layers: 4
+    linear_hidden_dim: 8192
+    scale: 0.001
+    bias: false
     
 
 test:

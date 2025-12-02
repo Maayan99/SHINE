@@ -10,7 +10,7 @@
 #SBATCH -o metalora.out
 #SBATCH -e metalora.err
 
-NAME=8gpu_4lora_16metalora_lr5e-5
+NAME=8gpu_4lora_4metalora_lr5e-5_lr_withbias_noscale
 NUM_GPUS=8
 MASTER_PORT=18900             
 CONFIG_NAME="Qwen3-8B"
@@ -59,4 +59,4 @@ nohup torchrun \
     data.source=$SOURCE \
     optim.warmup_steps=$WARMUP_STEPS \
     optim.learning_rate=$LEARNING_RATE \
-    > tmp_metatrain.txt 2>&1 &
+    > tmp_metatrain_$NAME.txt 2>&1 &

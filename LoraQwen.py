@@ -55,7 +55,7 @@ class LoraLinear(nn.Linear):
         idx = 0
         A = plain_tensor[:, idx: idx + self.in_features * r].view(-1, self.in_features, r) * sqrt(scale)
         idx += self.in_features * r
-        B = plain_tensor[:, idx: idx + self.out_features * r].view(-1, r, self.out_features) * sqrt(scale)
+        B = plain_tensor[:, idx: idx + self.out_features * r].view(-1, r, self.out_features)* sqrt(scale)
         idx += self.out_features * r
         C = plain_tensor[:, idx: idx + self.out_features].view(-1, self.out_features) * scale if self.bias is not None else None
         return {"A": A, "B": B, "C": C}

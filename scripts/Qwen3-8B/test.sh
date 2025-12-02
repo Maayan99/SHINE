@@ -10,7 +10,7 @@
 #SBATCH -o test.out
 #SBATCH -e test.err
 
-
+NAME=?????????
 NUM_GPUS=4
 MASTER_PORT=18900             
 CONFIG_NAME="Qwen3-8B"       
@@ -41,4 +41,4 @@ nohup torchrun \
     --config-name $CONFIG_NAME \
     test.batch_size=$TEST_BATCH_SIZE \
     test_global_step=$TEST_GLOBAL_STEP \
-    > tmp_test.txt 2>&1 &
+    > tmp_test_$NAME.txt 2>&1 &

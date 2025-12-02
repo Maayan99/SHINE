@@ -59,4 +59,4 @@ nohup torchrun \
     data.source=$SOURCE \
     optim.warmup_steps=$WARMUP_STEPS \
     optim.learning_rate=$LEARNING_RATE \
-    > tmp_metatrain.txt 2>&1 &
+    > tmp_metatrain_$NAME.txt 2>&1 &

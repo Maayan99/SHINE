@@ -50,4 +50,4 @@ nohup torchrun \
     run.gradient_accumulation_steps=$GRADIENT_ACCUMULATION_STEPS \
     run.use_gradient_checkpoint=$USE_GRADIENT_CHECKPOINT \
     resume_global_step=$RESUME_GLOBAL_STEP \
-    > tmp_pretrain.txt 2>&1 &
+    > tmp_pretrain_$NAME.txt 2>&1 &

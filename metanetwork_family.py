@@ -3,33 +3,6 @@ import torch.nn.functional as F
 import torch.nn as nn
 import weakref
 
-# class MetanetworkTransformer(nn.Module):
-#     def __init__(self, output_dim, cfg):
-#         super().__init__()
-#         transformer_cfg = cfg.metanetwork.transformer_cfg
-#         self.fc_in = nn.Linear(cfg.hidden_size * cfg.num_mem_token, transformer_cfg.encoder_cfg.d_model)
-#         encoder_layer = nn.TransformerEncoderLayer(**transformer_cfg.encoder_cfg)
-#         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=transformer_cfg.num_layers)
-#         self.fc_out1 = nn.Linear(transformer_cfg.encoder_cfg.d_model * cfg.num_layers, transformer_cfg.output_bottleneck)
-#         self.fc_out2 = nn.Linear(transformer_cfg.output_bottleneck, output_dim)
-        
-#         self.num_layers = cfg.num_layers
-#         self.num_mem_token = cfg.num_mem_token
-#         self.hidden_size = cfg.hidden_size
-
-#     def forward(self, memory_states:torch.Tensor) -> dict:
-#         '''
-#         memory_states: (batch_size, num_layer, num_mem_token, hidden_size)
-#         '''
-#         batch_size = memory_states.shape[0]
-#         x = memory_states.view(batch_size, self.num_layers, self.num_mem_token * self.hidden_size)  
-#         x = F.gelu(self.fc_in(x))  # (batch_size, num_layer, d_model)    
-#         x = self.transformer_encoder(x)
-#         x = x.contiguous().view(batch_size, -1)  # (batch_size, num_layer * d_model) 
-#         x = F.gelu(self.fc_out1(x))
-#         x = self.fc_out2(x)  # (batch_size, output_dim)
-#         return x
-
 class MetanetworkTransformer(nn.Module):
     def __init__(self, cfg):
         super().__init__()
@@ -42,14 +15,10 @@ class MetanetworkTransformer(nn.Module):
         self.token_pe = nn.Parameter(torch.zeros((self.num_mem_token, self.hidden_size)), requires_grad=True)
 
         transformer_cfg = cfg.metanetwork.transformer_cfg
-        self.transformer_layers = nn.ModuleList([nn.TransformerEncoderLayer(**transformer_cfg.encoder_cfg) for _ in range(transformer_cfg.num_layers)])
+        self.transformer_layers = nn.ModuleList([nn.TransformerEncoderLayer (**transformer_cfg.encoder_cfg) for _ in range(transformer_cfg.num_layers)])
         
-        self.scale = nn.Parameter(torch.ones((1, self.num_layers, self.num_mem_token, 1)), requires_grad=True)
-        self.use_final_bias = transformer_cfg.use_final_bias
-        if self.use_final_bias:
-            self.bias = nn.Parameter(torch.zeros((1, self.num_layers, self.num_mem_token // self.mean_pool_size, self.hidden_size)), requires_grad=True)
+        # self.scale = nn.Parameter(torch.ones((1, self.num_layers, self.num_mem_token, 1)), requires_grad=True)
         
-        # self.set_mode(cfg.mode)
 
     def forward(self, memory_states:torch.Tensor) -> dict:
         '''
@@ -62,21 +31,97 @@ class MetanetworkTransformer(nn.Module):
                 memory_states = self.transformer_layers[i](memory_states.transpose(1, 2).flatten(0, 1)).unflatten(0, (batch_size, self.num_mem_token)).transpose(1, 2) # exchange information among layers
             else:
                 memory_states = self.transformer_layers[i](memory_states.flatten(0, 1)).unflatten(0, (batch_size, self.num_layers)) # exchange information among tokens
-        memory_states = memory_states * self.scale
+        # memory_states = memory_states * self.scale
         memory_states = torch.mean(memory_states.unflatten(2, (self.mean_pool_size, self.num_mem_token // self.mean_pool_size)), dim=2)  # mean pool
-        if self.use_final_bias:
-            memory_states += self.bias
         return memory_states.flatten(1, -1)
-    
-    def set_mode(self, mode: str):
-        if mode == 'pretrain':
-            self.scale.requires_grad = True
-            if self.use_final_bias:
-                self.bias.requires_grad = True
-        elif mode == 'train':
-            self.scale.requires_grad = False
-            if self.use_final_bias:
-                self.bias.requires_grad = False
+
+# class MetanetworkTransformer(nn.Module):
+#     def __init__(self, cfg):
+#         super().__init__()
+#         self.num_layers = cfg.num_layers
+#         self.num_mem_token = cfg.num_mem_token
+#         self.hidden_size = cfg.hidden_size
+#         self.mean_pool_size = cfg.metanetwork.transformer_cfg.mean_pool_size
+
+#         self.layer_pe = nn.Parameter(torch.zeros((self.num_layers, self.hidden_size)), requires_grad=True)
+#         self.token_pe = nn.Parameter(torch.zeros((self.num_mem_token, self.hidden_size)), requires_grad=True)
+
+#         transformer_cfg = cfg.metanetwork.transformer_cfg
+#         self.transformer_layers = nn.ModuleList([nn.TransformerEncoderLayer (**transformer_cfg.encoder_cfg) for _ in range(transformer_cfg.num_layers)])
+        
+#         self.scale = nn.Parameter(torch.ones((1, self.num_layers, self.num_mem_token, 1)), requires_grad=True)
+#         self.use_final_bias = transformer_cfg.use_final_bias
+#         if self.use_final_bias:
+#             self.bias = nn.Parameter(torch.zeros((1, self.num_layers, self.num_mem_token // self.mean_pool_size, self.hidden_size)), requires_grad=True)
+        
+
+#     def forward(self, memory_states:torch.Tensor) -> dict:
+#         '''
+#         memory_states: (batch_size, num_layer, num_mem_token, hidden_size)
+#         '''
+#         memory_states = memory_states + self.layer_pe.unsqueeze(-2) + self.token_pe # apply PE
+#         batch_size = memory_states.shape[0]
+#         for i in range(len(self.transformer_layers)):
+#             memory_states = self.transformer_layers[i](memory_states.flatten(0, 1)).unflatten(0, (batch_size, self.num_layers)) # exchange information among tokens
+#         memory_states = memory_states * self.scale
+#         memory_states = torch.mean(memory_states.unflatten(2, (self.mean_pool_size, self.num_mem_token // self.mean_pool_size)), dim=2)  # mean pool
+#         if self.use_final_bias:
+#             memory_states += self.bias
+#         return memory_states.flatten(1, -1)
+
+class MetanetworkLinear(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.num_layers = cfg.num_layers
+        self.num_mem_token = cfg.num_mem_token
+        self.hidden_size = cfg.hidden_size
+        
+        self.layer_pe = nn.Parameter(torch.zeros((self.num_layers, self.hidden_size)), requires_grad=True)
+        self.token_pe = nn.Parameter(torch.zeros((self.num_mem_token, self.hidden_size)), requires_grad=True)
+        
+        linear_cfg = cfg.metanetwork.linear_cfg
+        self.dim_list = [self.hidden_size] + [linear_cfg.linear_hidden_dim] * (linear_cfg.num_layers - 1) + [self.hidden_size]
+        self.linear_layers = nn.ModuleList([nn.Linear(self.dim_list[i], self.dim_list[i+1], bias=linear_cfg.bias) for i in range(linear_cfg.num_layers)])
+        
+
+    def forward(self, memory_states:torch.Tensor) -> dict:
+        '''
+        memory_states: (batch_size, num_layer, num_mem_token, hidden_size)
+        '''
+        memory_states = memory_states + self.layer_pe.unsqueeze(-2) + self.token_pe # apply PE
+        batch_size = memory_states.shape[0]
+        memory_states = memory_states.flatten(0, 1)
+        for i in range(len(self.linear_layers)):
+            memory_states = F.gelu(self.linear_layers[i](memory_states))
+        return memory_states.unflatten(0, (batch_size, self.num_layers)).flatten(1, -1)
+
+class MetanetworkLinearGate(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.num_layers = cfg.num_layers
+        self.num_mem_token = cfg.num_mem_token
+        self.hidden_size = cfg.hidden_size
+        
+        self.layer_pe = nn.Parameter(torch.zeros((self.num_layers, self.hidden_size)), requires_grad=True)
+        self.token_pe = nn.Parameter(torch.zeros((self.num_mem_token, self.hidden_size)), requires_grad=True)
+        
+        linear_cfg = cfg.metanetwork.linear_cfg
+        self.dim_list = [self.hidden_size] + [linear_cfg.linear_hidden_dim] * (linear_cfg.num_layers - 1) + [self.hidden_size * 2]
+        self.linear_layers = nn.ModuleList([nn.Linear(self.dim_list[i], self.dim_list[i+1], bias=linear_cfg.bias) for i in range(linear_cfg.num_layers)])
+        
+
+    def forward(self, memory_states:torch.Tensor) -> dict:
+        '''
+        memory_states: (batch_size, num_layer, num_mem_token, hidden_size)
+        '''
+        memory_states = memory_states + self.layer_pe.unsqueeze(-2) + self.token_pe # apply PE
+        batch_size = memory_states.shape[0]
+        memory_states = memory_states.flatten(0, 1)
+        for i in range(len(self.linear_layers)):
+            memory_states = F.gelu(self.linear_layers[i](memory_states))
+        gate, value = memory_states.chunk(2, dim=-1)
+        memory_states = torch.sigmoid(gate) * value
+        return memory_states.unflatten(0, (batch_size, self.num_layers)).flatten(1, -1)
 
 class Metanetwork(nn.Module):
     def __init__(self, metamodel:nn.Module, cfg, output_dim: int):
@@ -88,6 +133,12 @@ class Metanetwork(nn.Module):
         if cfg.metanetwork.type == "transformer":
             self.metanetwork = MetanetworkTransformer(cfg)
             self.scale = cfg.metanetwork.transformer_cfg.scale
+        elif cfg.metanetwork.type == "linear":
+            self.metanetwork = MetanetworkLinear(cfg)
+            self.scale = cfg.metanetwork.linear_cfg.scale
+        elif cfg.metanetwork.type == "lineargate":
+            self.metanetwork = MetanetworkLinearGate(cfg)
+            self.scale = cfg.metanetwork.linear_gate_cfg.scale
         else:
             raise ValueError(f"Unknown metanetwork type: {cfg.metanetwork.type}")
         

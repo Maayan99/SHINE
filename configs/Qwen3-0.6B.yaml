@@ -72,7 +72,6 @@ metanetwork:
       norm_first: False
       bias: false
     mean_pool_size: 1 # Don't use
-    use_final_bias: False
     num_layers: 8 # Must be even
     scale: 0.001
 

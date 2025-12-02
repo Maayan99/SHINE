@@ -22,6 +22,7 @@ export HF_ENDPOINT=https://hf-mirror.com
 hf download fxmeng/transmla_pretrain_6B_tokens --repo-type dataset --local-dir data/transmla_pretrain_6B_tokens
 hf download bigai-nlco/LooGLE --repo-type dataset --local-dir data/loogle
 hf download rajpurkar/squad --repo-type dataset --local-dir data/squad
+hf download ArmelR/the-pile-splitted --repo-type dataset --local-dir data/Pile
 ```
 
 0.6B:

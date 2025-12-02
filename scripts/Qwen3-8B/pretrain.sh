@@ -10,7 +10,7 @@
 #SBATCH -o metalora.out
 #SBATCH -e metalora.err
 
-NAME=8gpu_4lora_16metalora_lr5e-5
+NAME=8gpu_4lora_4metalora_lr5e-5_lr_withbias_noscale
 NUM_GPUS=8
 MASTER_PORT=18900             
 CONFIG_NAME="Qwen3-8B"       
@@ -21,6 +21,7 @@ GRADIENT_ACCUMULATION_STEPS=4
 USE_GRADIENT_CHECKPOINT=False
 RESUME_GLOBAL_STEP=latest   # -1: don't resume,   int: resume from global steps,  latest: resume from latest
 LEARNING_RATE=5e-5
+TYPE=transformer
 
 # Find available port
 while true; do
@@ -52,4 +53,5 @@ nohup torchrun \
     run.use_gradient_checkpoint=$USE_GRADIENT_CHECKPOINT \
     resume_global_step=$RESUME_GLOBAL_STEP \
     optim.learning_rate=$LEARNING_RATE \
-    > tmp_pretrain.txt 2>&1 &
+    metanetwork.type=$TYPE \
+    > tmp_pretrain_$NAME.txt 2>&1 &

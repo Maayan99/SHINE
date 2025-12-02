@@ -446,7 +446,7 @@ def main(cfg: DictConfig):
     cfg.hidden_size = config.hidden_size
     cfg.num_layers = config.num_hidden_layers
 
-    if cfg.metanetwork.type == "transformer":
+    if cfg.metanetwork.type in ["transformer", "linear", "lineargate"]:
         tmp_model = MetaModelCls.from_pretrained(cfg.model.model_from, config=config)
         lora_numel = tmp_model.lora_params_numel(cfg.model.lora_r)
         assert lora_numel % (cfg.hidden_size * cfg.num_layers) == 0, \
@@ -455,11 +455,15 @@ def main(cfg: DictConfig):
         cfg.num_mem_token = config.num_mem_token
         del tmp_model
         if is_main_process():
-            logger.info(f"Using transformer metanetwork, set num_mem_token to {config.num_mem_token}")
-    else:
+            logger.info(f"Using {cfg.metanetwork.type} metanetwork, automatically set num_mem_token to {config.num_mem_token}")
+    elif cfg.metanetwork.type in []:
         config.num_mem_token = cfg.num_mem_token
+        if is_main_process():
+            logger.info(f"Using {cfg.metanetwork.type} metanetwork, set num_mem_token to {config.num_mem_token} as configured")
+    else:
+        raise ValueError(f"Unknown metanetwork type: {cfg.metanetwork.type}")
 
-    tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_from, padding_side="left")
+    tokenizer = AutoTokenizer.from_pretrained(cfg.model.tokenizer_from, padding_side="left", use_fast=True)
     tokenizer.add_tokens(['<RECON>', '<COMP>'])
     tokenizer.chat_template = "{%- if tools %}\n    {{- '<|im_start|>system\\n' }}\n    {%- if messages[0].role == 'system' %}\n        {{- messages[0].content + '\\n\\n' }}\n    {%- endif %}\n    {{- \"# Tools\\n\\nYou may call one or more functions to assist with the user query.\\n\\nYou are provided with function signatures within <tools></tools> XML tags:\\n<tools>\" }}\n    {%- for tool in tools %}\n        {{- \"\\n\" }}\n        {{- tool | tojson }}\n    {%- endfor %}\n    {{- \"\\n</tools>\\n\\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\\n<tool_call>\\n{\\\"name\\\": <function-name>, \\\"arguments\\\": <args-json-object>}\\n</tool_call><|im_end|>\\n\" }}\n{%- else %}\n    {%- if messages[0].role == 'system' %}\n        {{- '<|im_start|>system\\n' + messages[0].content + '<|im_end|>\\n' }}\n    {%- endif %}\n{%- endif %}\n{%- set ns = namespace(multi_step_tool=true, last_query_index=messages|length - 1) %}\n{%- for message in messages[::-1] %}\n    {%- set index = (messages|length - 1) - loop.index0 %}\n    {%- if ns.multi_step_tool and message.role == \"user\" and message.content is string and not(message.content.startswith('<tool_response>') and message.content.endswith('</tool_response>')) %}\n        {%- set ns.multi_step_tool = false %}\n        {%- set ns.last_query_index = index %}\n    {%- endif %}\n{%- endfor %}\n{%- for message in messages %}\n    {%- if message.content is string %}\n        {%- set content = message.content %}\n    {%- else %}\n        {%- set content = '' %}\n    {%- endif %}\n    {%- if (message.role == \"user\") or (message.role == \"system\" and not loop.first) %}\n        {{- '<|im_start|>' + message.role + '\\n' + content + '<|im_end|>\\n' }}\n    {%- elif message.role == \"assistant\" %}\n        {%- set reasoning_content = '' %}\n        {%- if message.reasoning_content is string %}\n            {%- set reasoning_content = message.reasoning_content %}\n        {%- else %}\n            {%- if '</think>' in content %}\n                {%- set reasoning_content = content.split('</think>')[0].rstrip('\\n').split('<think>')[-1].lstrip('\\n') %}\n                {%- set content = content.split('</think>')[-1].lstrip('\\n') %}\n            {%- endif %}\n        {%- endif %}\n        {%- if loop.index0 > ns.last_query_index %}\n            {%- if (loop.last or (not loop.last and reasoning_content)) and (enable_thinking is not defined or enable_thinking != false) %}\n                {{- '<|im_start|>' + message.role + '\\n<think>\\n' + reasoning_content.strip('\\n') + '\\n</think>\\n\\n' + content.lstrip('\\n') }}\n            {%- else %}\n                {{- '<|im_start|>' + message.role + '\\n' + content }}\n            {%- endif %}\n        {%- else %}\n            {{- '<|im_start|>' + message.role + '\\n' + content }}\n        {%- endif %}\n        {%- if message.tool_calls %}\n            {%- for tool_call in message.tool_calls %}\n                {%- if (loop.first and content) or (not loop.first) %}\n                    {{- '\\n' }}\n                {%- endif %}\n                {%- if tool_call.function %}\n                    {%- set tool_call = tool_call.function %}\n                {%- endif %}\n                {{- '<tool_call>\\n{\"name\": \"' }}\n                {{- tool_call.name }}\n                {{- '\", \"arguments\": ' }}\n                {%- if tool_call.arguments is string %}\n                    {{- tool_call.arguments }}\n                {%- else %}\n                    {{- tool_call.arguments | tojson }}\n                {%- endif %}\n                {{- '}\\n</tool_call>' }}\n            {%- endfor %}\n        {%- endif %}\n        {{- '<|im_end|>\\n' }}\n    {%- elif message.role == \"tool\" %}\n        {%- if loop.first or (messages[loop.index0 - 1].role != \"tool\") %}\n            {{- '<|im_start|>user' }}\n        {%- endif %}\n        {{- '\\n<tool_response>\\n' }}\n        {{- content }}\n        {{- '\\n</tool_response>' }}\n        {%- if loop.last or (messages[loop.index0 + 1].role != \"tool\") %}\n            {{- '<|im_end|>\\n' }}\n        {%- endif %}\n    {%- endif %}\n{%- endfor %}\n{%- if add_generation_prompt %}\n    {{- '<|im_start|>assistant\\n' }}\n    {%- if enable_thinking is not defined or enable_thinking != false %}\n        {{- '<think>\\n\\n</think>\\n\\n' }}\n    {%- endif %}\n{%- endif %}"
     metamodel = MetaModelCls.from_pretrained(cfg.model.model_from, config=config)
@@ -502,7 +506,7 @@ def main(cfg: DictConfig):
                     logger.info(f"Loaded metanetwork from pretrain checkpoint. {pretrain_dir}")
             except Exception as e:
                 if is_main_process():
-                    logger.info("No pretrain checkpoint found, initializing metanetwork from scratch.")
+                    logger.info(f"No pretrain checkpoint found in {pretrain_dir}, initializing metanetwork from scratch.")
                 metalora = metanetwork.metamodel.init_lora_dict(cfg.model.metalora_r, scale=cfg.metanetwork.transformer_cfg.scale, device=device)
         else:
             # Initialize metalora
@@ -567,6 +571,7 @@ def main(cfg: DictConfig):
     if is_main_process():
         logger.info("Preparing data...")
     if cfg.data.source == "transmla":
+        raise ValueError(f"transmal not used")
         dataset = load_dataset(os.path.join("data", "transmla_pretrain_6B_tokens"), split="train")
         split_dataset = dataset.train_test_split(test_size=0.0001, seed=42)
         train_texts = split_dataset["train"]
@@ -657,9 +662,6 @@ def main(cfg: DictConfig):
         best_eval_loss = resume_state["best_eval_loss"]
         start_epoch = resume_state["epoch"]
         start_step_in_epoch = resume_state["step_in_epoch"]
-        
-    if is_main_process():
-        logger.info(f"Mode: {cfg.mode}. Use scale grad: {metanetwork.metanetwork.scale.requires_grad}")
 
     def one_train_epoch(epoch, start_epoch=1, start_step_in_epoch=0):
         nonlocal global_step, best_eval_loss
@@ -800,10 +802,6 @@ def main(cfg: DictConfig):
                         writer.add_scalar("eval/ppl", eval_metrics["perplexity"], global_step)
                     if is_main_process():
                         logger.info(f"[Eval @ step {global_step}] loss={eval_metrics['eval_loss']:.4f} ppl={eval_metrics['perplexity']:.2f}")
-                        # see scale
-                        torch.set_printoptions(threshold=float('inf'))
-                        logger.info(f"\n{torch.mean(ddp_metanet.module.metanetwork.scale.data[0,:,:,0], dim=1)}")
-                        logger.info(f"\n{ddp_metanet.module.metanetwork.scale.data[0,:,:,0]}")
 
                     # # Best checkpoint saving on rank 0
                     # if getattr(cfg.save, "save_best", True) and is_main_process():

@@ -10,6 +10,7 @@
 #SBATCH -e llmjudge.err         # Stderr file
 
 # === User-configurable variables ===
+NAME= ????????
 MASTER_PORT=18900
 CONFIG_NAME="Qwen3-8B"           # Hydra config name (e.g., base.yaml)
 
@@ -29,4 +30,4 @@ export OMP_NUM_THREADS=4
 python \
     llm_judge.py \
     --config-name $CONFIG_NAME \
-    > tmp_llmjudge.txt 2>&1
+    > tmp_llmjudge_$NAME.txt 2>&1

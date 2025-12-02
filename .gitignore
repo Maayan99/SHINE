@@ -4,8 +4,8 @@ checkpoints
 *.txt
 tmp.py
 outputs
-data/**
-models/**
+data
+models
 tensorboard
 nohup.out
 qwen-finetuned
@@ -28,3 +28,5 @@ squad_text_length_distribution.png
 squad_context_length_distribution.png
 squad_question_length_distribution.png
 *.jsonl
+data_preprocess
+
