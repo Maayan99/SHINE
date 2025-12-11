@@ -43,7 +43,7 @@ import logging
 from torch.utils.tensorboard import SummaryWriter
 from metanetwork_family import Metanetwork
 
-from utils.mydataset import TextDataset, create_mock_dataset, SquadDataset, SquadCollator, PretrainCollator, GroupedSquadDataset, GroupTextDataset, GroupPretrainCollator, IFTCollator, IFTDataset
+from utils.mydataset import TextDataset, create_mock_dataset, SquadDataset, SquadCollator, PretrainCollator, GroupedSquadDataset, GroupTextDataset, GroupPretrainCollator, IFTCollator, IFTDataset, IFTC1QADataset
 from utils.myseed import set_seed
 from utils.mylogging import get_logger
 from utils.mysaveload import (
@@ -610,8 +610,8 @@ def main(cfg: DictConfig):
         val_dataset = val_dataset.shuffle(seed=42).select(range(1000))
         # train_ds = SquadDataset(train_dataset, tokenizer)
         # val_ds = SquadDataset(val_dataset, tokenizer)
-        train_ds = GroupedSquadDataset(train_dataset, tokenizer, 512, name="Train")
-        val_ds = GroupedSquadDataset(val_dataset, tokenizer, 512, name="Validation")
+        train_ds = GroupedSquadDataset(train_dataset, tokenizer, 512, name="Train", sep="\n\n")
+        val_ds = GroupedSquadDataset(val_dataset, tokenizer, 512, name="Validation", sep="\n\n")
         train_collator = SquadCollator(tokenizer=tokenizer, conversation_max_length=cfg.data.conversation_max_length, context_max_length=cfg.data.context_max_length, metatrain=True, cfg=cfg)
         val_collator = SquadCollator(tokenizer=tokenizer, conversation_max_length=cfg.data.conversation_max_length, context_max_length=cfg.data.context_max_length, metatrain=True, cfg=cfg)
     elif cfg.data.source == "ift":
@@ -620,7 +620,15 @@ def main(cfg: DictConfig):
         train_ds = IFTDataset(data_path, group_idx_path, use_exceed=True)
         val_dataset = load_dataset(os.path.join("data", "squad"), split="validation")
         val_dataset = val_dataset.shuffle(seed=42).select(range(1000))
-        val_ds = GroupedSquadDataset(val_dataset, tokenizer, 512, name="Validation")
+        val_ds = GroupedSquadDataset(val_dataset, tokenizer, 512, name="Validation", sep="<|endoftext|>")
+        train_collator = IFTCollator(tokenizer, cfg.data.context_max_length, cfg.data.conversation_max_length, cfg=cfg)
+        val_collator = SquadCollator(tokenizer=tokenizer, conversation_max_length=cfg.data.conversation_max_length, context_max_length=cfg.data.context_max_length, metatrain=True, cfg=cfg)
+    elif cfg.data.source == "ift-c1qa":
+        data_path = os.path.join("data", "ift_c1qa.json")
+        train_ds = IFTC1QADataset(data_path, use_exceed=False, max_context_len=cfg.data.context_max_length, max_conversation_len=cfg.data.conversation_max_length)
+        val_dataset = load_dataset(os.path.join("data", "squad"), split="validation")
+        val_dataset = val_dataset.shuffle(seed=42).select(range(1000))
+        val_ds = GroupedSquadDataset(val_dataset, tokenizer, 512, name="Validation", sep="\n\n")
         train_collator = IFTCollator(tokenizer, cfg.data.context_max_length, cfg.data.conversation_max_length, cfg=cfg)
         val_collator = SquadCollator(tokenizer=tokenizer, conversation_max_length=cfg.data.conversation_max_length, context_max_length=cfg.data.context_max_length, metatrain=True, cfg=cfg)
     else:

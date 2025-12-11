@@ -422,6 +422,27 @@ class IFTDataset(Dataset):
             final_conversation.extend(conv)
         return {"evidence": final_context, "conversations": final_conversation}
 
+class IFTC1QADataset(Dataset):
+    def __init__(
+        self,
+        data_path: str,
+        max_context_len: int = 3000,
+        max_conversation_len: int = 256,
+        use_exceed: bool = False,
+    ):
+        self.item_list = json.load(open(data_path, "r"))
+        if not use_exceed:
+            self.item_list = [item for item in self.item_list if item['contextlen'] <= max_context_len and item['conversationlen'] <= max_conversation_len]
+        if is_main_process():
+            print(f"[IFTC1QADataset] Loaded {len(self.item_list)} items from {data_path}, use_exceed={use_exceed}")
+         
+    def __len__(self):
+        return len(self.item_list)
+
+    def __getitem__(self, idx) -> Dict[str, Any]:
+        item = self.item_list[idx]
+        return {"evidence": item['context'], "conversations": item['conversations']}
+
 # ---------------------------
 # Collator with dynamic padding and label masking
 # ---------------------------

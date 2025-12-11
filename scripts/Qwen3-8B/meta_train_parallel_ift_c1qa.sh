@@ -10,29 +10,30 @@
 #SBATCH -o metalora.out
 #SBATCH -e metalora.err
 
-NAME=tmp
+NAME=8gpu_4lora_4metalora_lr5e-5_grouppretrain_1450
 NUM_GPUS=8
 MASTER_PORT=18900             
-CONFIG_NAME="Qwen3-8B"       
-SOURCE=transmla
-TRAIN_BATCH_SIZE=1
-TEST_BATCH_SIZE=1
+CONFIG_NAME="Qwen3-8B"
+NUM_EPOCHS=1
+EVAL_STEPS=625
+SAVE_STEPS=625
 GRADIENT_ACCUMULATION_STEPS=4
 USE_GRADIENT_CHECKPOINT=False
-RESUME_GLOBAL_STEP=latest   # -1: don't resume,   int: resume from global steps,  latest: resume from latest
-LEARNING_RATE=5e-5
-TYPE=transformer
 CONTEXT_MAX_LEN=3000
 CONVERSATION_MAX_LEN=256
+RESUME_GLOBAL_STEP=latest
+SOURCE=ift-c1qa
+WARMUP_STEPS=400
+LEARNING_RATE=2.5e-5
+TYPE=transformer
 NUM_LAYERS=4
-WARMUP_STEPS=200
 
 # Find available port
 while true; do
     if ! nc -z 127.0.0.1 $MASTER_PORT; then
         break
     fi
-    ((MASTER_PORT++))
+    MASTER_PORT=$((MASTER_PORT + 1))
 done
 
 export HYDRA_FULL_ERROR=1
@@ -49,17 +50,17 @@ nohup torchrun \
     meta_train_parallel.py \
     --config-name $CONFIG_NAME \
     name=$NAME \
-    mode=pretrain \
-    data.source=$SOURCE \
-    data.train_batch_size=$TRAIN_BATCH_SIZE \
-    data.eval_batch_size=$TEST_BATCH_SIZE \
-    run.gradient_accumulation_steps=$GRADIENT_ACCUMULATION_STEPS \
     run.use_gradient_checkpoint=$USE_GRADIENT_CHECKPOINT \
-    resume_global_step=$RESUME_GLOBAL_STEP \
-    optim.learning_rate=$LEARNING_RATE \
-    data.conversation_max_length=$CONVERSATION_MAX_LEN \
+    optim.num_epochs=$NUM_EPOCHS \
+    eval.eval_steps=$EVAL_STEPS \
+    save.save_steps=$SAVE_STEPS \
     data.context_max_length=$CONTEXT_MAX_LEN \
+    data.conversation_max_length=$CONVERSATION_MAX_LEN \
+    run.gradient_accumulation_steps=$GRADIENT_ACCUMULATION_STEPS \
+    resume_global_step=$RESUME_GLOBAL_STEP \
+    data.source=$SOURCE \
+    optim.warmup_steps=$WARMUP_STEPS \
+    optim.learning_rate=$LEARNING_RATE \
     metanetwork.type=$TYPE \
     metanetwork.transformer_cfg.num_layers=$NUM_LAYERS \
-    optim.warmup_steps=$WARMUP_STEPS \
-    > tmp_pretrain_$NAME.txt 2>&1 &
+    > tmp_metatrain_$NAME.txt 2>&1 &
