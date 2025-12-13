@@ -43,7 +43,7 @@ import logging
 from torch.utils.tensorboard import SummaryWriter
 from metanetwork_family import Metanetwork
 
-from utils.mydataset import TextDataset, create_mock_dataset, SquadDataset, SquadCollator, PretrainCollator, GroupedSquadDataset, SFTDataset, SFTCollator, GroupTextDataset, GroupPretrainCollator
+from utils.mydataset import TextDataset, create_mock_dataset, SquadDataset, SquadCollator, PretrainCollator, GroupedSquadDataset, GroupTextDataset, GroupPretrainCollator, IFTCollator, IFTDataset, IFTC1QADataset
 from utils.myseed import set_seed
 from utils.mylogging import get_logger
 from utils.mysaveload import (
@@ -70,7 +70,6 @@ from utils.myddp import (
 from utils.myinit import _resolve_device, _import_class
 from collections import OrderedDict
 from typing import Optional, Union, Mapping, Sequence
-
 logger = get_logger("metalora")
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 torch.backends.cuda.matmul.allow_tf32 = True
