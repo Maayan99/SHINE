@@ -457,7 +457,7 @@ class BaseCollator:
         self.assistant_token_id = self.tokenizer.convert_tokens_to_ids("assistant")
         self.imstart_token_id = self.tokenizer.convert_tokens_to_ids("<|im_start|>")
         self.imend_token_id = self.tokenizer.convert_tokens_to_ids("<|im_end|>")
-        self.SYSTEM_PROMPT = None # "You are a concise and knowledgeable assistant. Answer the question based on your knowledge. Respond with a short phrase only. Keep the answer short and concise, without any explanation or additional words"
+        self.SYSTEM_PROMPT = "You are a concise assistant. Output only the final answer, in a few words, as short as possible. No explanations. Do not output anything else."
 
     def mask_label(self, labels):
         masks = torch.zeros_like(labels)
@@ -821,7 +821,6 @@ class SquadCollator(BaseCollator):
         # SYSTEM_PROMPT = "You are a QA assistant. For every question, output ONLY the final answer. No explanation, no reasoning, no extra words, no punctuation unless necessary."
         if self.metatrain:            
             messages = [
-                ([{"role": "system", "content": f"{self.SYSTEM_PROMPT}"}] if self.SYSTEM_PROMPT is not None else []) +
                 [
                     {"role": "user", "content": f"{question}"},
                     {"role": "assistant", "content": f"{answer}"}
@@ -829,17 +828,25 @@ class SquadCollator(BaseCollator):
                 for question, answer in zip(questions, answers)
             ]
         elif self.use_reference:
-            messages = [[
-                {"role": "user", "content": f"Reference:\n{evidence}\n\nBased on the reference, answer this question:\n{question}"},
-            ] for evidence, question in zip(evidences, questions)]
+            messages = [
+                ([{"role": "system", "content": f"{self.SYSTEM_PROMPT}"}] if self.SYSTEM_PROMPT is not None else []) +
+                [
+                    {"role": "user", "content": f"Reference:\n{evidence}\n\nBased on the reference, answer this question:\n{question}"},
+                ] 
+                for evidence, question in zip(evidences, questions)]
         elif self.only_question:
-            messages = [[
-                {"role": "user", "content": f"{question}"},
-            ] for question in questions]
+            messages = [
+                ([{"role": "system", "content": f"{self.SYSTEM_PROMPT}"}] if self.SYSTEM_PROMPT is not None else []) +
+                [
+                    {"role": "user", "content": f"{question}"},
+                ] 
+                for question in questions]
         else:
-            messages = [[
+            messages = [
+                [
                 {"role": "user", "content": f"{question}"},
-            ] for question in questions]
+                ] 
+                for question in questions]
 
 
         input_enc = self.tokenizer.apply_chat_template(
