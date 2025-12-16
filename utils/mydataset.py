@@ -564,18 +564,18 @@ class PretrainCollator(BaseCollator):
             labels = input_ids.clone()
             labels = self.mask_label(labels)
         
-        if is_main_process():
-            res = "input"
-            tokens = self.tokenizer.convert_ids_to_tokens(input_ids[0])
-            for i, t in enumerate(tokens):
-                res = f"{res}\n{i}: token_ids: {t} attention_mask: {input_attention_mask[0][i]} label: {labels[0][i] if labels is not None else 'N/A'}"
-            res = f"{res}\nevidence"
-            tokens = self.tokenizer.convert_ids_to_tokens(evidence_ids[0])
-            for i, t in enumerate(tokens):
-                res = f"{res}\n{i}: token_ids: {t} attention_mask: {evidence_attention_mask[0][i]}"
-            print(res)
-        barrier()
-        exit()
+        # if is_main_process():
+        #     res = "input"
+        #     tokens = self.tokenizer.convert_ids_to_tokens(input_ids[0])
+        #     for i, t in enumerate(tokens):
+        #         res = f"{res}\n{i}: token_ids: {t} attention_mask: {input_attention_mask[0][i]} label: {labels[0][i] if labels is not None else 'N/A'}"
+        #     res = f"{res}\nevidence"
+        #     tokens = self.tokenizer.convert_ids_to_tokens(evidence_ids[0])
+        #     for i, t in enumerate(tokens):
+        #         res = f"{res}\n{i}: token_ids: {t} attention_mask: {evidence_attention_mask[0][i]}"
+        #     print(res)
+        # barrier()
+        # exit()
         
         # # Debug print for the first item
         # first_input_ids = input_ids[0]

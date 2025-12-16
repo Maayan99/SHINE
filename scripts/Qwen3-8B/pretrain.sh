@@ -22,8 +22,8 @@ USE_GRADIENT_CHECKPOINT=False
 RESUME_GLOBAL_STEP=latest   # -1: don't resume,   int: resume from global steps,  latest: resume from latest
 LEARNING_RATE=5e-5
 TYPE=transformer
-CONVERSATION_MAX_LEN=2260
-CONTEXT_MAX_LEN=100
+CONTEXT_MAX_LEN=2750
+CONVERSATION_MAX_LEN=100
 NUM_LAYERS=6
 WARMUP_STEPS=200
 
