@@ -441,7 +441,7 @@ class IFTC1QADataset(Dataset):
 
     def __getitem__(self, idx) -> Dict[str, Any]:
         item = self.item_list[idx]
-        return {"evidence": item['context'], "conversations": item['conversations']}
+        return {"evidence": item['context'], "conversations": item['conversations'], "contextlen": item['contextlen'], "conversationlen": item['conversationlen']}
 
 # ---------------------------
 # Collator with dynamic padding and label masking
@@ -710,16 +710,17 @@ class GroupPretrainCollator(BaseCollator):
             labels = input_ids.clone()
             labels = self.mask_label(labels)
         
-        # res = "input"
-        # tokens = self.tokenizer.convert_ids_to_tokens(input_ids[0])
-        # for i, t in enumerate(tokens):
-        #     res = f"{res}\n{i}: token_ids: {t} attention_mask: {input_attention_mask[0][i]} label: {labels[0][i] if labels is not None else 'N/A'}"
-        # res = f"{res}\nevidence"
-        # tokens = self.tokenizer.convert_ids_to_tokens(evidence_ids[0])
-        # for i, t in enumerate(tokens):
-        #     res = f"{res}\n{i}: token_ids: {t} attention_mask: {evidence_attention_mask[0][i]}"
-        # print(res)
-        # exit()
+        if is_main_process():
+            res = "input"
+            tokens = self.tokenizer.convert_ids_to_tokens(input_ids[0])
+            for i, t in enumerate(tokens):
+                res = f"{res}\n{i}: token_ids: {t} attention_mask: {input_attention_mask[0][i]} label: {labels[0][i] if labels is not None else 'N/A'}"
+            res = f"{res}\nevidence"
+            tokens = self.tokenizer.convert_ids_to_tokens(evidence_ids[0])
+            for i, t in enumerate(tokens):
+                res = f"{res}\n{i}: token_ids: {t} attention_mask: {evidence_attention_mask[0][i]}"
+            print(res)
+            exit()
         
         # # Debug print for the first item
         # first_input_ids = input_ids[0]
@@ -994,8 +995,7 @@ class IFTCollator(BaseCollator):
         if isinstance(conversation_texts[0], Column):
             conversation_texts = list(conversation_texts[0])  # or conversation_texts[0][:]
         messages = [
-            ([{"role": "system", "content": f"{self.SYSTEM_PROMPT}"}] if self.SYSTEM_PROMPT is not None else []) + conversation
-            for conversation in conversation_texts
+            conversation for conversation in conversation_texts
         ]
 
         evidence_enc = self.tokenizer(
@@ -1025,17 +1025,19 @@ class IFTCollator(BaseCollator):
         labels = input_ids.clone()
         labels = self.mask_label(labels)
         
-        # res = "input"
-        # tokens = self.tokenizer.convert_ids_to_tokens(input_ids[0])
-        # for i, t in enumerate(tokens):
-        #     res = f"{res}\n{i}: token_ids: {t} attention_mask: {input_attention_mask[0][i]} label: {labels[0][i] if labels is not None else 'N/A'}"
-        # res = f"{res}\nevidence"
-        # tokens = self.tokenizer.convert_ids_to_tokens(evidence_ids[0])
-        # for i, t in enumerate(tokens):
-        #     res = f"{res}\n{i}: token_ids: {t} attention_mask: {evidence_attention_mask[0][i]}"
-        # res = f"{res}\n\n"
-        # print(res)
-        # exit()
+        # if (labels != -100).sum().item() == 0:        
+        #     res = "input"
+        #     tokens = self.tokenizer.convert_ids_to_tokens(input_ids[0])
+        #     for i, t in enumerate(tokens):
+        #         res = f"{res}\n{i}: token_ids: {t} attention_mask: {input_attention_mask[0][i]} label: {labels[0][i] if labels is not None else 'N/A'}"
+        #     res = f"{res}\nevidence"
+        #     tokens = self.tokenizer.convert_ids_to_tokens(evidence_ids[0])
+        #     for i, t in enumerate(tokens):
+        #         res = f"{res}\n{i}: token_ids: {t} attention_mask: {evidence_attention_mask[0][i]}"
+        #     res = f"{res}\ncontext len:{batch[0]['contextlen']} conversation len:{batch[0]['conversationlen']}"
+        #     res = f"{res}\n\n"
+        #     print(res)
+        #     exit()
                 
         return {
             "evidence": evidence_texts,
