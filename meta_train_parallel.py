@@ -19,6 +19,7 @@ from torch.utils.data import Dataset, DataLoader
 from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
+from utils.myvisualize import visualize_loradict_to_files
 
 from transformers import (
     AutoTokenizer,
@@ -693,6 +694,9 @@ def main(cfg: DictConfig):
         start_epoch = resume_state["epoch"]
         start_step_in_epoch = resume_state["step_in_epoch"]
 
+    if cfg.visualize_steps and is_main_process():
+        os.makedirs(cfg.visualize.visualize_dir, exist_ok=True)
+    
     def one_train_epoch(epoch, start_epoch=1, start_step_in_epoch=0):
         nonlocal global_step, best_eval_loss
         epoch_loss = 0.0
@@ -726,9 +730,12 @@ def main(cfg: DictConfig):
 
             with torch.amp.autocast(enabled=(cfg.run.use_amp and device.type == "cuda"), device_type="cuda", dtype=amp_dtype):
                 # Forward through possibly DDP-wrapped metanetwork
-                outputs = ddp_metanet(input_ids=input_ids, input_attention_mask=input_attention_mask, 
+                outputs, loradict = ddp_metanet(input_ids=input_ids, input_attention_mask=input_attention_mask, 
                                     evidence_ids=evidence_ids, evidence_attention_mask=evidence_attention_mask, 
-                                    labels=labels, metalora=metalora, use_gradient_checkpoint=cfg.run.use_gradient_checkpoint, step=step)
+                                    labels=labels, metalora=metalora, use_gradient_checkpoint=cfg.run.use_gradient_checkpoint, return_loradict=True)
+                if cfg.visualize.visualize_steps > 0 and step % cfg.visualize.visualize_steps == 0:
+                    if is_main_process():
+                        visualize_loradict_to_files(loradict, out_dir=os.path.join(cfg.visualize.visualize_dir, f"epoch_{epoch}_step_{step}"))
                 loss = (outputs.loss / max(1, cfg.run.gradient_accumulation_steps)).item()
                 reg_loss = (outputs.reg_loss / max(1, cfg.run.gradient_accumulation_steps)).item()
                 backward_loss = (outputs.loss + outputs.reg_loss) / max(1, cfg.run.gradient_accumulation_steps)
