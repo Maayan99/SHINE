@@ -430,7 +430,7 @@ def main(cfg: DictConfig):
         for l in lens:
             datasets.append(TextDataset([data[i]['text'] for i in idx_dict[str(l)]]))
             if is_main_process():
-                print(f"{l}: datasets num: {len(datasets)}")
+                print(f"{l}: datasets num: {len(datasets[l-1])}")
     else:
         raise ValueError(f"Unknown data source: {cfg.test.source}")
 
