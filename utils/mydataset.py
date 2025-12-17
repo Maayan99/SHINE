@@ -618,6 +618,148 @@ class PretrainCollator(BaseCollator):
         }
         
 @dataclass
+class TestPretrainCollator(BaseCollator):
+    tokenizer: Any
+    cfg: Any
+    context_max_length: int = 1024
+    conversation_max_length: int = 1024
+    metatrain: bool = False
+    mode: str = "recon"
+    
+    def __post_init__(self):
+        super().__post_init__()
+    
+    def split_text(self, text):
+        t = text.split()
+        if len(t) < 2:
+            return text, "Nothing to complete."
+
+        ratio = 1.0 - random.uniform(self.min_completion_ratio, self.max_completion_ratio)
+        split_index = round(len(t) * ratio)
+
+        left = t[:split_index]
+        right = t[split_index:]
+
+        if not right:  # ensure right is not empty
+            left, right = t[:-1], t[-1:]
+        elif not left:
+            left, right = t[:1], t[1:]
+        
+        return ' '.join(left), ' '.join(right)
+    
+
+    def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+        texts = [ex["text"] for ex in batch]
+        
+        if self.mode == "comp":
+            splits = [self.split_text(text) for text in texts]
+            evidence_texts = [split[0] for split in splits]
+            answer_texts = texts
+            # answer_texts = [split[1] for split in splits]
+            messages = [[
+                {"role": "user", "content": f"<COMP>"},
+                {"role": "assistant", "content": f"{answer}"}
+            ] for answer in answer_texts]
+        elif self.mode == "recon":
+            evidence_texts = texts
+            answer_texts = texts
+            messages = [[
+                {"role": "user", "content": f"<RECON>"},
+                {"role": "assistant", "content": f"{answer}"}
+            ] for answer in answer_texts]
+        else:
+            raise NotImplementedError(f"mode {self.mode} is not implemented in TestPretrainCollator.")
+
+        evidence_enc = self.tokenizer(
+            evidence_texts,
+            max_length=self.context_max_length,
+            truncation=True,
+            return_tensors="pt",
+            padding="max_length",
+        )
+        evidence_ids = evidence_enc["input_ids"]
+        evidence_attention_mask = evidence_enc["attention_mask"]
+        answer_enc = self.tokenizer(
+            answer_texts,
+            max_length=self.conversation_max_length,
+            truncation=True,
+            return_tensors="pt",
+            padding="max_length",
+        )
+        answer_ids = answer_enc["input_ids"]
+        answer_attention_mask = answer_enc["attention_mask"]
+
+        input_enc = self.tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=False,   # adds the assistant turn start
+                tokenize=True,
+                return_tensors="pt",
+                max_length=self.conversation_max_length,
+                truncation=True,
+                return_dict=True,
+                padding="max_length",
+                enable_thinking=False,
+            )
+        input_ids = input_enc["input_ids"]
+        input_attention_mask = input_enc["attention_mask"]
+        labels = None
+        if self.metatrain:
+            labels = input_ids.clone()
+            labels = self.mask_label(labels)
+        
+        # if is_main_process():
+        #     res = "input"
+        #     tokens = self.tokenizer.convert_ids_to_tokens(input_ids[0])
+        #     for i, t in enumerate(tokens):
+        #         res = f"{res}\n{i}: token_ids: {t} attention_mask: {input_attention_mask[0][i]} label: {labels[0][i] if labels is not None else 'N/A'}"
+        #     res = f"{res}\nevidence"
+        #     tokens = self.tokenizer.convert_ids_to_tokens(evidence_ids[0])
+        #     for i, t in enumerate(tokens):
+        #         res = f"{res}\n{i}: token_ids: {t} attention_mask: {evidence_attention_mask[0][i]}"
+        #     print(res)
+        # barrier()
+        # exit()
+        
+        # # Debug print for the first item
+        # first_input_ids = input_ids[0]
+        # first_labels = labels[0]
+        # first_evidence_ids = evidence_ids[0]
+        # first_input_text = self.tokenizer.decode(first_input_ids, skip_special_tokens=False)
+        # first_evidence_ids = [i for i in first_evidence_ids if i != self.tokenizer.pad_token_id]
+        # first_evidence_text = self.tokenizer.decode(first_evidence_ids, skip_special_tokens=False)
+        # print("\n=== First input sentence (meta-train mode) ===")
+        # print(first_input_text)
+        # print("\n=== First evidence sentence (meta-train mode) ===")
+        # print(first_evidence_text)
+        # # tokens = self.tokenizer.convert_ids_to_tokens(first_input_ids)
+        # # print("\n=== Tokens, labels, and corresponding words ===")
+        # # for i, (tok, lab) in enumerate(zip(tokens, first_labels.tolist())):
+        # # # for i, tok in enumerate(tokens):
+        # #     # decode the token alone to see its text segment
+        # #     word_piece = self.tokenizer.decode(
+        # #         [self.tokenizer.convert_tokens_to_ids(tok)],
+        # #         skip_special_tokens=True,
+        # #         clean_up_tokenization_spaces=False,
+        # #     )
+        # #     # show both raw token, decoded string, and label
+        # #     # print(f"{tok:<20} | {word_piece:<15} | mask={input_attention_mask[0][i]}")
+        # #     print(f"{tok:<20} | {word_piece:<15} | label={lab} | mask={input_attention_mask[0][i]}")
+        # exit()
+                
+        return {
+            "evidence": texts,
+            "evidence_ids": evidence_ids,
+            "evidence_attention_mask": evidence_attention_mask,
+            "input_ids": input_ids,
+            "labels": labels,
+            "input_attention_mask": input_attention_mask,
+            "answers": texts,
+            "answer_ids": answer_ids,
+            "answer_attention_mask": answer_attention_mask,
+            "questions": ["Please repeat what you have read."] * len(texts),
+        }
+        
+@dataclass
 class GroupPretrainCollator(BaseCollator):
     tokenizer: Any
     cfg: Any
