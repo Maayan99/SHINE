@@ -11,7 +11,7 @@
 #SBATCH -e test.err
 
 NAME=8gpu_4lora_4metalora_lr5e-5_grouppretrain_1450
-NUM_GPUS=8
+NUM_GPUS=4
 MASTER_PORT=18900             
 CONFIG_NAME="Qwen3-8B"       
 TEST_BATCH_SIZE=4
@@ -40,7 +40,7 @@ nohup torchrun \
     --node_rank=0 \
     --master_addr="127.0.0.1" \
     --master_port=$MASTER_PORT \
-    test.py \
+    test_pretrain.py \
     --config-name $CONFIG_NAME \
     name=$NAME \
     test.batch_size=$TEST_BATCH_SIZE \
