@@ -39,7 +39,7 @@ pretrain:
 
 visualize:
   visualize_steps: -1
-  visualize_dir: checkpoints/${name}/${mode}/visualize/
+  visualize_mode: "pretrain"
 
 logging:
   logging_steps: 1

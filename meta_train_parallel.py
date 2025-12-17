@@ -470,9 +470,9 @@ def main(cfg: DictConfig):
     metamodel = MetaModelCls.from_pretrained(cfg.model.model_from, config=config)
     metamodel.reset_mem_tokens()
     metamodel.resize_token_embeddings(len(tokenizer))
-    nothing_id = tokenizer.convert_tokens_to_ids("<NOTHING>")
-    with torch.no_grad():
-        metamodel.get_input_embeddings().weight[nothing_id].zero_()
+    # nothing_id = tokenizer.convert_tokens_to_ids("<NOTHING>")
+    # with torch.no_grad():
+    #     metamodel.get_input_embeddings().weight[nothing_id].zero_()
     # if is_main_process():
     #     print("NOTHING:", metamodel.get_input_embeddings().weight[nothing_id])
     metanetwork = Metanetwork(metamodel, cfg, metamodel.lora_params_numel(cfg.model.lora_r))
@@ -693,9 +693,6 @@ def main(cfg: DictConfig):
         best_eval_loss = resume_state["best_eval_loss"]
         start_epoch = resume_state["epoch"]
         start_step_in_epoch = resume_state["step_in_epoch"]
-
-    if cfg.visualize_steps and is_main_process():
-        os.makedirs(cfg.visualize.visualize_dir, exist_ok=True)
     
     def one_train_epoch(epoch, start_epoch=1, start_step_in_epoch=0):
         nonlocal global_step, best_eval_loss
@@ -730,11 +727,9 @@ def main(cfg: DictConfig):
 
             with torch.amp.autocast(enabled=(cfg.run.use_amp and device.type == "cuda"), device_type="cuda", dtype=amp_dtype):
                 # Forward through possibly DDP-wrapped metanetwork
-                outputs, loradict = ddp_metanet(input_ids=input_ids, input_attention_mask=input_attention_mask, 
+                outputs = ddp_metanet(input_ids=input_ids, input_attention_mask=input_attention_mask, 
                                     evidence_ids=evidence_ids, evidence_attention_mask=evidence_attention_mask, 
-                                    labels=labels, metalora=metalora, use_gradient_checkpoint=cfg.run.use_gradient_checkpoint, return_loradict=True)
-                if is_main_process() and cfg.visualize.visualize_steps > 0 and step % cfg.visualize.visualize_steps == 0:
-                    visualize_loradict_to_files(loradict, out_dir=os.path.join(cfg.visualize.visualize_dir, f"epoch_{epoch}_step_{step}"))
+                                    labels=labels, metalora=metalora, use_gradient_checkpoint=cfg.run.use_gradient_checkpoint)
                 loss = (outputs.loss / max(1, cfg.run.gradient_accumulation_steps)).item()
                 reg_loss = (outputs.reg_loss / max(1, cfg.run.gradient_accumulation_steps)).item()
                 backward_loss = (outputs.loss + outputs.reg_loss) / max(1, cfg.run.gradient_accumulation_steps)

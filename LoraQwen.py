@@ -28,41 +28,67 @@ from torch import Tensor
 from transformers.models.qwen3.modeling_qwen3 import ACT2FN, Cache, DynamicCache, GenerationMixin, use_kernel_forward_from_hub, create_causal_mask, create_sliding_window_causal_mask, FlashAttentionKwargs, GenericForQuestionAnswering, GenericForSequenceClassification, GenericForTokenClassification, GradientCheckpointingLayer, BaseModelOutputWithPast, CausalLMOutputWithPast, ROPE_INIT_FUNCTIONS, dynamic_rope_update, ALL_ATTENTION_FUNCTIONS, PreTrainedModel, Unpack, TransformersKwargs, auto_docstring, can_return_tuple, deprecate_kwarg, check_model_inputs, Qwen3Config, Qwen3RMSNorm, Qwen3MLP, Qwen3Attention, apply_rotary_pos_emb, eager_attention_forward, Qwen3RotaryEmbedding
 from math import sqrt
 from torch.utils.checkpoint import checkpoint
+from torch import Tensor
 
 class LoraLinear(nn.Linear):
-    def __init__(self, in_features, out_features, bias = True, device=None, dtype=None):
-        super().__init__(in_features, out_features, bias, device, dtype)
+    def __init__(self, in_features, out_features, bias=True, device=None, dtype=None):
+        super().__init__(in_features, out_features, bias=bias, device=device, dtype=dtype)
 
-    def forward(self, input: Tensor, lora_dict = None) -> Tensor: 
+    def forward(self, input: Tensor, lora_dict=None) -> Tensor:
+        base = F.linear(input, self.weight, self.bias)
         if lora_dict is None:
-            return F.linear(input, self.weight, self.bias)
+            return base
+
+        A = lora_dict["A"]              # [Lb, in, r]
+        B = lora_dict["B"]              # [Lb, r, out]
+        C = lora_dict.get("C", None)    # [Lb, out] or None
+
+        Lb = A.shape[0]
+        torch._assert(input.shape[-1] == self.in_features, "last dim must be in_features")
+        torch._assert(input.shape[0] % Lb == 0, "input batch must be multiple of lora batch")
+        num_beams = input.shape[0] // Lb
+
+        # Flatten all middle dims (e.g., seq_len) into S for faster matmul
+        # input: [B, ..., in] -> x: [Lb, beams, S, in]
+        x = input.reshape(Lb, num_beams, -1, self.in_features)
+
+        # [Lb, beams, S, in] @ [Lb, in, r] -> [Lb, beams, S, r]
+        tmp = torch.matmul(x, A)
+        # [Lb, beams, S, r] @ [Lb, r, out] -> [Lb, beams, S, out]
+        lora_out = torch.matmul(tmp, B)
+
+        if self.bias is None:
+            torch._assert(C is None, "If bias is None, lora_dict['C'] must also be None")
         else:
-            assert input.shape[0] % lora_dict["A"].shape[0] == 0, f"input batch size {input.shape[0]} must be multiple of lora_dict['A'] batch size {lora_dict['A'].shape[0]}"
-            num_beams = input.shape[0] // lora_dict["A"].shape[0]
-            if self.bias is None:
-                assert lora_dict.get("C") is None, "If bias is None, lora_dict['C'] must also be None"
-            else:
-                assert lora_dict.get("C") is not None, "If bias is not None, lora_dict['C'] must also be not None"
-            return F.linear(input, self.weight, self.bias) + torch.bmm(torch.bmm(input, lora_dict["A"].repeat_interleave(num_beams, dim=0)), lora_dict["B"].repeat_interleave(num_beams, dim=0)) + (lora_dict["C"].unsqueeze(1).repeat_interleave(num_beams, dim=0) if self.bias is not None else 0)
+            torch._assert(C is not None, "If bias is not None, lora_dict['C'] must also be not None")
+            # C: [Lb, out] -> [Lb, 1, 1, out] broadcast across beams and S
+            lora_out = lora_out + C[:, None, None, :]
+
+        # Restore original middle dims: [Lb*beams, ..., out]
+        lora_out = lora_out.reshape(*input.shape[:-1], self.out_features)
+
+        return base + lora_out
     
     def lora_params_numel(self, r):
         if not hasattr(self, "lora_params_numel_cache"):
-            self.lora_params_numel_cache = self.in_features * r + self.out_features * r + (self.out_features if self.bias is not None else 0) 
+            self.lora_params_numel_cache = (
+                self.in_features * r
+                + self.out_features * r
+                + (self.out_features if self.bias is not None else 0)
+            )
         return self.lora_params_numel_cache
-    
-    def generate_lora_dict(self, r, scale, plain_tensor, method):
-        assert plain_tensor.shape[-1] == self.lora_params_numel(r), f"plain_tensor's last dimension {plain_tensor.shape[-1]} does not match lora_params_numel {self.lora_params_numel(r)}"
-        if hasattr(self, "generate_func"):
-            return self.generate_func(r, scale, plain_tensor)
+
+    def set_generate_func(self, method):
         if method == "rl":
             def generate_func(r, scale, plain_tensor):
                 idx = 0
                 A = plain_tensor[:, idx: idx + self.in_features * r].view(-1, self.in_features, r) * sqrt(scale)
                 idx += self.in_features * r
-                B = plain_tensor[:, idx: idx + self.out_features * r].view(-1, r, self.out_features)* sqrt(scale)
+                B = plain_tensor[:, idx: idx + self.out_features * r].view(-1, r, self.out_features) * sqrt(scale)
                 idx += self.out_features * r
                 C = plain_tensor[:, idx: idx + self.out_features].view(-1, self.out_features) * scale if self.bias is not None else None
                 return {"A": A, "B": B, "C": C}
+
         elif method == "rr":
             def generate_func(r, scale, plain_tensor):
                 idx = 0
@@ -72,6 +98,7 @@ class LoraLinear(nn.Linear):
                 idx += self.out_features * r
                 C = plain_tensor[:, idx: idx + self.out_features].view(-1, self.out_features) * scale if self.bias is not None else None
                 return {"A": A, "B": B, "C": C}
+
         elif method == "lr":
             def generate_func(r, scale, plain_tensor):
                 idx = 0
@@ -81,26 +108,122 @@ class LoraLinear(nn.Linear):
                 idx += self.out_features * r
                 C = plain_tensor[:, idx: idx + self.out_features].view(-1, self.out_features) * scale if self.bias is not None else None
                 return {"A": A, "B": B, "C": C}
+
         elif method == "ll":
             def generate_func(r, scale, plain_tensor):
                 idx = 0
                 A = plain_tensor[:, idx: idx + self.in_features * r].view(-1, r, self.in_features).transpose(-1, -2) * sqrt(scale)
                 idx += self.in_features * r
-                B = plain_tensor[:, idx: idx + self.out_features * r].view(-1, r, self.out_features)* sqrt(scale)
+                B = plain_tensor[:, idx: idx + self.out_features * r].view(-1, r, self.out_features) * sqrt(scale)
                 idx += self.out_features * r
                 C = plain_tensor[:, idx: idx + self.out_features].view(-1, self.out_features) * scale if self.bias is not None else None
                 return {"A": A, "B": B, "C": C}
+
         else:
             raise NotImplementedError(f"LoRA method {method} not implemented")
+
         self.generate_func = generate_func
+
+    def generate_lora_dict(self, r, scale, plain_tensor):
+        torch._assert(
+            plain_tensor.shape[-1] == self.lora_params_numel(r),
+            "plain_tensor last dim does not match lora_params_numel"
+        )
+        torch._assert(hasattr(self, "generate_func"), "generate_func not set")
         return self.generate_func(r, scale, plain_tensor)
-    
+
     def init_lora_dict(self, r, scale, device):
         A = (torch.randn(size=(1, self.in_features, r), device=device) * sqrt(scale)).detach()
         A.requires_grad_()
         B = torch.zeros(size=(1, r, self.out_features), requires_grad=True, device=device)
         C = torch.zeros(size=(1, self.out_features), requires_grad=True, device=device) if self.bias is not None else None
         return {"A": A, "B": B, "C": C}
+
+# class LoraLinear(nn.Linear):
+#     def __init__(self, in_features, out_features, bias = True, device=None, dtype=None):
+#         super().__init__(in_features, out_features, bias, device, dtype)
+
+#     def forward(self, input: Tensor, lora_dict = None) -> Tensor: 
+#         if lora_dict is None:
+#             return F.linear(input, self.weight, self.bias)
+#         else:
+#             assert input.shape[0] % lora_dict["A"].shape[0] == 0, f"input batch size {input.shape[0]} must be multiple of lora_dict['A'] batch size {lora_dict['A'].shape[0]}"
+#             num_beams = input.shape[0] // lora_dict["A"].shape[0]
+#             if self.bias is None:
+#                 assert lora_dict.get("C") is None, "If bias is None, lora_dict['C'] must also be None"
+#             else:
+#                 assert lora_dict.get("C") is not None, "If bias is not None, lora_dict['C'] must also be not None"
+#             return F.linear(input, self.weight, self.bias) + torch.bmm(torch.bmm(input, lora_dict["A"].repeat_interleave(num_beams, dim=0)), lora_dict["B"].repeat_interleave(num_beams, dim=0)) + (lora_dict["C"].unsqueeze(1).repeat_interleave(num_beams, dim=0) if self.bias is not None else 0)
+    
+#     def lora_params_numel(self, r):
+#         if not hasattr(self, "lora_params_numel_cache"):
+#             self.lora_params_numel_cache = self.in_features * r + self.out_features * r + (self.out_features if self.bias is not None else 0) 
+#         return self.lora_params_numel_cache
+    
+#     def set_generate_func(self, method):
+#         pass
+#         # if method == "rl":
+#         #     def generate_func(r, scale, plain_tensor):
+#         #         idx = 0
+#         #         A = plain_tensor[:, idx: idx + self.in_features * r].view(-1, self.in_features, r) * sqrt(scale)
+#         #         idx += self.in_features * r
+#         #         B = plain_tensor[:, idx: idx + self.out_features * r].view(-1, r, self.out_features)* sqrt(scale)
+#         #         idx += self.out_features * r
+#         #         C = plain_tensor[:, idx: idx + self.out_features].view(-1, self.out_features) * scale if self.bias is not None else None
+#         #         return {"A": A, "B": B, "C": C}
+#         # elif method == "rr":
+#         #     def generate_func(r, scale, plain_tensor):
+#         #         idx = 0
+#         #         A = plain_tensor[:, idx: idx + self.in_features * r].view(-1, self.in_features, r) * sqrt(scale)
+#         #         idx += self.in_features * r
+#         #         B = plain_tensor[:, idx: idx + self.out_features * r].view(-1, self.out_features, r).transpose(-1, -2) * sqrt(scale)
+#         #         idx += self.out_features * r
+#         #         C = plain_tensor[:, idx: idx + self.out_features].view(-1, self.out_features) * scale if self.bias is not None else None
+#         #         return {"A": A, "B": B, "C": C}
+#         # elif method == "lr":
+#         #     def generate_func(r, scale, plain_tensor):
+#         #         idx = 0
+#         #         A = plain_tensor[:, idx: idx + self.in_features * r].view(-1, r, self.in_features).transpose(-1, -2) * sqrt(scale)
+#         #         idx += self.in_features * r
+#         #         B = plain_tensor[:, idx: idx + self.out_features * r].view(-1, self.out_features, r).transpose(-1, -2) * sqrt(scale)
+#         #         idx += self.out_features * r
+#         #         C = plain_tensor[:, idx: idx + self.out_features].view(-1, self.out_features) * scale if self.bias is not None else None
+#         #         return {"A": A, "B": B, "C": C}
+#         # elif method == "ll":
+#         #     def generate_func(r, scale, plain_tensor):
+#         #         idx = 0
+#         #         A = plain_tensor[:, idx: idx + self.in_features * r].view(-1, r, self.in_features).transpose(-1, -2) * sqrt(scale)
+#         #         idx += self.in_features * r
+#         #         B = plain_tensor[:, idx: idx + self.out_features * r].view(-1, r, self.out_features)* sqrt(scale)
+#         #         idx += self.out_features * r
+#         #         C = plain_tensor[:, idx: idx + self.out_features].view(-1, self.out_features) * scale if self.bias is not None else None
+#         #         return {"A": A, "B": B, "C": C}
+#         # else:
+#         #     raise NotImplementedError(f"LoRA method {method} not implemented")
+#         # self.generate_func = generate_func
+        
+#     # def generate_lora_dict(self, r, scale, plain_tensor):
+#     #     assert plain_tensor.shape[-1] == self.lora_params_numel(r), f"plain_tensor's last dimension {plain_tensor.shape[-1]} does not match lora_params_numel {self.lora_params_numel(r)}"
+#     #     assert hasattr(self, "generate_func"), "generate_func not set"
+#     #     return self.generate_func(r, scale, plain_tensor)
+    
+#     def generate_lora_dict(self, r, scale, plain_tensor):
+#         assert plain_tensor.shape[-1] == self.lora_params_numel(r), f"plain_tensor's last dimension {plain_tensor.shape[-1]} does not match lora_params_numel {self.lora_params_numel(r)}"
+#         idx = 0
+#         A = plain_tensor[:, idx: idx + self.in_features * r].view(-1, self.in_features, r) * sqrt(scale)
+#         idx += self.in_features * r
+#         B = plain_tensor[:, idx: idx + self.out_features * r].view(-1, r, self.out_features)* sqrt(scale)
+#         idx += self.out_features * r
+#         C = plain_tensor[:, idx: idx + self.out_features].view(-1, self.out_features) * scale if self.bias is not None else None
+#         return {"A": A, "B": B, "C": C}
+    
+#     def init_lora_dict(self, r, scale, device):
+#         A = (torch.randn(size=(1, self.in_features, r), device=device) * sqrt(scale)).detach()
+#         A.requires_grad_()
+#         B = torch.zeros(size=(1, r, self.out_features), requires_grad=True, device=device)
+#         C = torch.zeros(size=(1, self.out_features), requires_grad=True, device=device) if self.bias is not None else None
+#         return {"A": A, "B": B, "C": C}
+    
 
 class LoraQwen3MLP(Qwen3MLP):
     def __init__(self, config):
@@ -121,14 +244,19 @@ class LoraQwen3MLP(Qwen3MLP):
             self.lora_params_numel_cache = self.gate_proj.lora_params_numel(r) + self.up_proj.lora_params_numel(r) + self.down_proj.lora_params_numel(r)
         return self.lora_params_numel_cache
     
-    def generate_lora_dict(self, r, scale, plain_tensor, method):
+    def set_generate_func(self, method):
+        self.gate_proj.set_generate_func(method)
+        self.up_proj.set_generate_func(method)
+        self.down_proj.set_generate_func(method)
+    
+    def generate_lora_dict(self, r, scale, plain_tensor):
         assert plain_tensor.shape[-1] == self.lora_params_numel(r), f"plain_tensor's last dimension {plain_tensor.shape[-1]} does not match lora_params_numel {self.lora_params_numel(r)}"
         idx = 0
-        gate = self.gate_proj.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + self.gate_proj.lora_params_numel(r)], method)
+        gate = self.gate_proj.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + self.gate_proj.lora_params_numel(r)])
         idx += self.gate_proj.lora_params_numel(r)
-        up = self.up_proj.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + self.up_proj.lora_params_numel(r)], method)
+        up = self.up_proj.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + self.up_proj.lora_params_numel(r)])
         idx += self.up_proj.lora_params_numel(r)
-        down = self.down_proj.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + self.down_proj.lora_params_numel(r)], method)
+        down = self.down_proj.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + self.down_proj.lora_params_numel(r)])
         return {"gate": gate, "up": up, "down": down}
 
     def init_lora_dict(self, r, scale, device):
@@ -220,16 +348,22 @@ class LoraQwen3Attention(Qwen3Attention):
             self.lora_params_numel_cache += self.o_proj.lora_params_numel(r)
         return self.lora_params_numel_cache
     
-    def generate_lora_dict(self, r, scale, plain_tensor, method):
+    def set_generate_func(self, method):
+        self.q_proj.set_generate_func(method)
+        self.k_proj.set_generate_func(method)
+        self.v_proj.set_generate_func(method)
+        self.o_proj.set_generate_func(method)
+    
+    def generate_lora_dict(self, r, scale, plain_tensor):
         assert plain_tensor.shape[-1] == self.lora_params_numel(r), f"plain_tensor's last dimension {plain_tensor.shape[-1]} does not match lora_params_numel {self.lora_params_numel(r)}"
         idx = 0
-        q = self.q_proj.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + self.q_proj.lora_params_numel(r)], method)
+        q = self.q_proj.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + self.q_proj.lora_params_numel(r)])
         idx += self.q_proj.lora_params_numel(r)
-        k = self.k_proj.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + self.k_proj.lora_params_numel(r)], method)
+        k = self.k_proj.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + self.k_proj.lora_params_numel(r)])
         idx += self.k_proj.lora_params_numel(r)
-        v = self.v_proj.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + self.v_proj.lora_params_numel(r)], method)
+        v = self.v_proj.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + self.v_proj.lora_params_numel(r)])
         idx += self.v_proj.lora_params_numel(r)
-        o = self.o_proj.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + self.o_proj.lora_params_numel(r)], method)
+        o = self.o_proj.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + self.o_proj.lora_params_numel(r)])
         return {"q": q, "k": k, "v": v, "o": o}
 
     def init_lora_dict(self, r, scale, device):
@@ -337,13 +471,17 @@ class LoraQwen3DecoderLayer(Qwen3DecoderLayer):
             self.lora_params_numel_cache += self.self_attn.lora_params_numel(r)
             self.lora_params_numel_cache += self.mlp.lora_params_numel(r)
         return self.lora_params_numel_cache
+    
+    def set_generate_func(self, method):
+        self.self_attn.set_generate_func(method)
+        self.mlp.set_generate_func(method)
 
-    def generate_lora_dict(self, r, scale, plain_tensor, method):
+    def generate_lora_dict(self, r, scale, plain_tensor):
         assert plain_tensor.shape[-1] == self.lora_params_numel(r), f"plain_tensor's last dimension {plain_tensor.shape[-1]} does not match lora_params_numel {self.lora_params_numel(r)}"
         idx = 0
-        attention = self.self_attn.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + self.self_attn.lora_params_numel(r)], method)
+        attention = self.self_attn.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + self.self_attn.lora_params_numel(r)])
         idx += self.self_attn.lora_params_numel(r)
-        mlp = self.mlp.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + self.mlp.lora_params_numel(r)], method)
+        mlp = self.mlp.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + self.mlp.lora_params_numel(r)])
         return {"attention": attention, "mlp": mlp}
 
     def init_lora_dict(self, r, scale, device):
@@ -540,14 +678,18 @@ class LoraQwen3Model(Qwen3PreTrainedModel):
             for layer in self.layers:
                 self.lora_params_numel_cache += layer.lora_params_numel(r)
         return self.lora_params_numel_cache
+
+    def set_generate_func(self, method):
+        for layer in self.layers:
+            layer.set_generate_func(method)
     
-    def generate_lora_dict(self, r, scale, plain_tensor, method):
+    def generate_lora_dict(self, r, scale, plain_tensor):
         assert plain_tensor.shape[-1] == self.lora_params_numel(r), f"plain_tensor's last dimension {plain_tensor.shape[-1]} does not match lora_params_numel {self.lora_params_numel(r)}"
         idx = 0
         loradict = {}
         for i, layer in enumerate(self.layers):
             layer_lora_params_numel = layer.lora_params_numel(r)
-            loradict[i] = layer.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + layer_lora_params_numel], method)
+            loradict[i] = layer.generate_lora_dict(r, scale, plain_tensor[:, idx: idx + layer_lora_params_numel])
             idx += layer_lora_params_numel
         return loradict
 
@@ -741,8 +883,11 @@ class LoraQwen3ForCausalLM(Qwen3PreTrainedModel, GenerationMixin):
     def lora_params_numel(self, r):
         return self.model.lora_params_numel(r)
     
-    def generate_lora_dict(self, r, scale, plain_tensor, method):
-        return self.model.generate_lora_dict(r, scale, plain_tensor, method)
+    def set_generate_func(self, method):
+        self.model.set_generate_func(method)
+    
+    def generate_lora_dict(self, r, scale, plain_tensor):
+        return self.model.generate_lora_dict(r, scale, plain_tensor)
 
     def init_lora_dict(self, r, scale, device):
         return self.model.init_lora_dict(r, scale, device)

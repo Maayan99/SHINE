@@ -132,6 +132,7 @@ class Metanetwork(nn.Module):
         self.metamodel = metamodel
         self.adapter_reg = cfg.optim.adapter_reg
         self.method = cfg.metanetwork.method
+        self.metamodel.set_generate_func(self.method)
         
         if cfg.metanetwork.type == "transformer":
             self.metanetwork = MetanetworkTransformer(cfg)
@@ -151,24 +152,24 @@ class Metanetwork(nn.Module):
         return getattr(self.metamodel, "config", None)
 
     @torch.compile # (mode="max-autotune")
-    def forward(self, input_ids, input_attention_mask, evidence_ids, evidence_attention_mask, metalora = None, labels = None, use_metanet = True, use_gradient_checkpoint = False, return_loradict = False, **kwargs) -> dict:
+    def forward(self, input_ids, input_attention_mask, evidence_ids, evidence_attention_mask, metalora = None, labels = None, use_metanet = True, use_gradient_checkpoint = False, **kwargs) -> dict:
         '''
         memory_states: (batch_size, num_layer, num_mem_token, hidden_size)
         '''
         if use_metanet:
             assert metalora is not None, "metalora cannot be None when use_metanet is True"
-            loradict, plain_output = self.generate_lora_dict(evidence_ids, evidence_attention_mask, metalora, use_gradient_checkpoint=use_gradient_checkpoint, return_plain=True, method=self.method)
+            loradict, plain_output = self.generate_lora_dict(evidence_ids, evidence_attention_mask, metalora, use_gradient_checkpoint=use_gradient_checkpoint, return_plain=True)
             outputs = self.metamodel(input_ids=input_ids, attention_mask=input_attention_mask, loradict=loradict, labels=labels, ignore_mem_token=True, use_gradient_checkpoint=use_gradient_checkpoint, **kwargs)
             outputs.reg_loss = self.adapter_reg * torch.abs(plain_output).sum()
         else:
             outputs = self.metamodel(input_ids=input_ids, attention_mask=input_attention_mask, labels=labels, ignore_mem_token=True, use_gradient_checkpoint=use_gradient_checkpoint, **kwargs)
-        return outputs, loradict if return_loradict else outputs
+        return outputs
     
-    def generate_lora_dict(self, evidence_ids, evidence_attention_mask, metalora, use_gradient_checkpoint = False, return_plain = False, method = "Undefined") -> dict:
+    def generate_lora_dict(self, evidence_ids, evidence_attention_mask, metalora, use_gradient_checkpoint = False, return_plain = False) -> dict:
         outputs = self.metamodel(input_ids=evidence_ids, attention_mask=evidence_attention_mask, loradict=metalora, use_gradient_checkpoint=use_gradient_checkpoint)
         memory_states = outputs.memory_states
         plain_output = self.metanetwork(memory_states)  # (batch_size, output_dim)
-        loradict = self.metamodel.generate_lora_dict(self.lora_r, scale=self.scale, plain_tensor=plain_output, method=method)
+        loradict = self.metamodel.generate_lora_dict(self.lora_r, scale=self.scale, plain_tensor=plain_output)
         return loradict if not return_plain else (loradict, plain_output)
         
     
