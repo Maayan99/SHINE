@@ -213,7 +213,7 @@ def test_and_save(
         input_attention_mask = batch["input_attention_mask"].to(
             device, non_blocking=True
         )
-        ground_truths = batch["full_answers"]
+        ground_truths = batch["answers"]
         questions = batch["questions"]
         labels = (
             None
