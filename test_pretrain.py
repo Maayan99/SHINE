@@ -428,7 +428,7 @@ def main(cfg: DictConfig):
         data = list(ds["train"])
         idx_dict = json.load(open(os.path.join(data_dir, "idx_dict.json")))
         for l in lens:
-            datasets.append(TextDataset(data[idx_dict[str(l)]]))
+            datasets.append(TextDataset([data[i]['text'] for i in idx_dict[str(l)]]))
             if is_main_process():
                 print(f"{l}: datasets num: {len(datasets)}")
     else:
