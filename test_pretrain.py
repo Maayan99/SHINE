@@ -228,9 +228,24 @@ def test_and_save(
             use_metanet=use_metanet,
             metalora=metalora,
         )
-        loss = outputs.loss
-        valid_tokens = (labels != -100).sum().item()
-        print(f"loss: {loss}\noutputs: {outputs}\nvalid_tokens: {valid_tokens}")
+        logits = outputs.logits  # (B, T, V)
+        shift_logits = logits[:, :-1, :].contiguous()
+        shift_labels = labels[:, 1:].contiguous()
+        loss_per_token = F.cross_entropy(
+            shift_logits.view(-1, shift_logits.size(-1)),
+            shift_labels.view(-1),
+            reduction="none"
+        )
+        loss_per_token = loss_per_token.view(shift_labels.size())
+        mask = (shift_labels != -100)
+        loss_per_token = loss_per_token * mask
+        loss_per_sample = loss_per_token.sum(dim=1) / mask.sum(dim=1)
+        valid_tokens = (labels != -100).sum(dim=1).item()
+        res = ""
+        for i in range(batch_size):
+            res = f"{res}\bbatch_idx: {i}"
+            for j in range(len(labels)):
+                res = f"{res}\ntoken_idx: {j}, input{full_input_ids[i][j].item()}, attn_mask: {full_input_attention_mask[i][j].item()}, label: {labels[i][j].item()}, loss: {loss_per_token[i][j].item():.4f}"       
         exit()
 
         loradict = None
