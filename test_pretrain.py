@@ -214,6 +214,7 @@ def test_and_save(
             device, non_blocking=True
         )
         ground_truths = batch["answers"]
+        ground_truths_ids = batch["answer_ids"]
         questions = batch["questions"]
         labels = (
             None
@@ -286,7 +287,9 @@ def test_and_save(
                 "question": questions[i],
                 "think": think,
                 "answer": answer,
+                "answer_ids": gen_out[i].tolist(),
                 "ground_truth": ground_truths[i],
+                "ground_truth_ids": ground_truths_ids[i].tolist(),
             }
 
             tmp_f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -435,7 +438,7 @@ def main(cfg: DictConfig):
             datasets.append(TextDataset([data[i]['text'] for i in idx_dict[str(l)]]))
             if is_main_process():
                 print(f"{l}: datasets num: {len(datasets[l-1])}")
-        collator = TestPretrainCollator(tokenizer, cfg, context_max_length=1020, conversation_max_length=1030, mode="recon")
+        collator = TestPretrainCollator(tokenizer, cfg, context_max_length=1020, conversation_max_length=10, mode="recon")
     else:
         raise ValueError(f"Unknown data source: {cfg.test.source}")
 

@@ -658,14 +658,12 @@ class TestPretrainCollator(BaseCollator):
             # answer_texts = [split[1] for split in splits]
             messages = [[
                 {"role": "user", "content": f"<COMP>"},
-                {"role": "assistant", "content": f"{answer}"}
             ] for answer in answer_texts]
         elif self.mode == "recon":
             evidence_texts = texts
             answer_texts = texts
             messages = [[
                 {"role": "user", "content": f"<RECON>"},
-                {"role": "assistant", "content": f"{answer}"}
             ] for answer in answer_texts]
         else:
             raise NotImplementedError(f"mode {self.mode} is not implemented in TestPretrainCollator.")
@@ -691,7 +689,7 @@ class TestPretrainCollator(BaseCollator):
 
         input_enc = self.tokenizer.apply_chat_template(
                 messages,
-                add_generation_prompt=False,   # adds the assistant turn start
+                add_generation_prompt=True,   # adds the assistant turn start
                 tokenize=True,
                 return_tensors="pt",
                 max_length=self.conversation_max_length,
@@ -707,18 +705,18 @@ class TestPretrainCollator(BaseCollator):
             labels = input_ids.clone()
             labels = self.mask_label(labels)
         
-        # if is_main_process():
-        #     res = "input"
-        #     tokens = self.tokenizer.convert_ids_to_tokens(input_ids[0])
-        #     for i, t in enumerate(tokens):
-        #         res = f"{res}\n{i}: token_ids: {t} attention_mask: {input_attention_mask[0][i]} label: {labels[0][i] if labels is not None else 'N/A'}"
-        #     res = f"{res}\nevidence"
-        #     tokens = self.tokenizer.convert_ids_to_tokens(evidence_ids[0])
-        #     for i, t in enumerate(tokens):
-        #         res = f"{res}\n{i}: token_ids: {t} attention_mask: {evidence_attention_mask[0][i]}"
-        #     print(res)
-        # barrier()
-        # exit()
+        if is_main_process():
+            res = "input"
+            tokens = self.tokenizer.convert_ids_to_tokens(input_ids[0])
+            for i, t in enumerate(tokens):
+                res = f"{res}\n{i}: token_ids: {t} attention_mask: {input_attention_mask[0][i]} label: {labels[0][i] if labels is not None else 'N/A'}"
+            res = f"{res}\nevidence"
+            tokens = self.tokenizer.convert_ids_to_tokens(evidence_ids[0])
+            for i, t in enumerate(tokens):
+                res = f"{res}\n{i}: token_ids: {t} attention_mask: {evidence_attention_mask[0][i]}"
+            print(res)
+        barrier()
+        exit()
         
         # # Debug print for the first item
         # first_input_ids = input_ids[0]
