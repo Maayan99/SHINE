@@ -527,6 +527,7 @@ class PretrainCollator(BaseCollator):
         else:
             raise NotImplementedError("metatrain=False mode is not implemented in PretrainCollator.")
 
+        evidence_texts = [f"{etext}{self.eot}" for etext in evidence_texts]
         evidence_enc = self.tokenizer(
             evidence_texts,
             max_length=self.context_max_length,
@@ -829,7 +830,7 @@ class GroupPretrainCollator(BaseCollator):
         else:
             raise NotImplementedError("metatrain=False mode is not implemented in GroupPretrainCollator.")
 
-        evidence_texts_all = [self.eot.join(random.sample(evidence_texts, len(evidence_texts))) for evidence_texts in evidence_texts_list]
+        evidence_texts_all = [f"{self.eot.join(random.sample(evidence_texts, len(evidence_texts)))}{self.eot}" for evidence_texts in evidence_texts_list]
         evidence_enc = self.tokenizer(
             evidence_texts_all,
             max_length=self.context_max_length,

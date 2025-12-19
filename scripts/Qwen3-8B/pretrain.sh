@@ -10,9 +10,9 @@
 #SBATCH -o metalora.out
 #SBATCH -e metalora.err
 
-NAME=tmp
-NUM_GPUS=8
-MASTER_PORT=18900             
+NAME=tmp3
+NUM_GPUS=2
+MASTER_PORT=18930      
 CONFIG_NAME="Qwen3-8B"       
 SOURCE=transmla
 TRAIN_BATCH_SIZE=1
@@ -22,11 +22,13 @@ USE_GRADIENT_CHECKPOINT=False
 RESUME_GLOBAL_STEP=latest   # -1: don't resume,   int: resume from global steps,  latest: resume from latest
 LEARNING_RATE=5e-5
 TYPE=transformer
-CONTEXT_MAX_LEN=
-CONVERSATION_MAX_LEN=100
-NUM_LAYERS=6
+CONVERSATION_MAX_LEN=1440
+CONTEXT_MAX_LEN=1431
+NUM_LAYERS=4
 WARMUP_STEPS=200
 METHOD=rl
+LORA_R=8
+METALORA_R=8
 
 # Find available port
 while true; do
@@ -64,4 +66,6 @@ nohup torchrun \
     metanetwork.transformer_cfg.num_layers=$NUM_LAYERS \
     optim.warmup_steps=$WARMUP_STEPS \
     metanetwork.method=$METHOD \
+    model.lora_r=$LORA_R \
+    model.metalora_r=$METALORA_R \
     > tmp_pretrain_$NAME.txt 2>&1 &

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-NAME=8gpu_4lora_4metalora_lr5e-5_grouppretrain_6layer
+NAME=8gpu_4lora_4metalora_lr5e-5_grouppretrain_6layer_1270
 MASTER_PORT=18920       
 CONFIG_NAME="Qwen3-8B"       
 SOURCE=grouptransmla
@@ -11,7 +11,7 @@ USE_GRADIENT_CHECKPOINT=False
 RESUME_GLOBAL_STEP=latest   # -1: don't resume,   int: resume from global steps,  latest: resume from latest
 LEARNING_RATE=5e-5
 CONVERSATION_MAX_LEN=1270   # Extra base len: 0 Extra chat len per turn: 10
-CONTEXT_MAX_LEN=$((CONVERSATION_MAX_LEN - 10))
+CONTEXT_MAX_LEN=$((CONVERSATION_MAX_LEN - 9)) # $((CONVERSATION_MAX_LEN - 10))
 TYPE=transformer
 NUM_LAYERS=6
 WARMUP_STEPS=200

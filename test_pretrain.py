@@ -639,7 +639,7 @@ def main(cfg: DictConfig):
         raise ValueError(f"Unknown data source: {cfg.test.source}")
 
     pin = device.type == "cuda"
-    for i, (ds, collator) in enumerate(zip(datasets, collators)):
+    for i, (ds, collator) in enumerate(zip(datasets, collators), start=1):
         test_sampler = (
             DistributedSampler(
                 ds, num_replicas=get_world_size(), rank=get_rank(), shuffle=False
