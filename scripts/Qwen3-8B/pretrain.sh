@@ -10,7 +10,7 @@
 #SBATCH -o metalora.out
 #SBATCH -e metalora.err
 
-NAME=tmp3
+NAME=tmp
 NUM_GPUS=2
 MASTER_PORT=18930      
 CONFIG_NAME="Qwen3-8B"       
@@ -22,8 +22,8 @@ USE_GRADIENT_CHECKPOINT=False
 RESUME_GLOBAL_STEP=latest   # -1: don't resume,   int: resume from global steps,  latest: resume from latest
 LEARNING_RATE=5e-5
 TYPE=transformer
-CONVERSATION_MAX_LEN=1440
-CONTEXT_MAX_LEN=1431
+CONVERSATION_MAX_LEN=1380
+CONTEXT_MAX_LEN=1371
 NUM_LAYERS=4
 WARMUP_STEPS=200
 METHOD=rl
