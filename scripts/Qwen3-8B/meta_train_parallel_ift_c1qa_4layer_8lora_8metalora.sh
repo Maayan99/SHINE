@@ -68,5 +68,5 @@ nohup torchrun \
     metanetwork.transformer_cfg.num_layers=$NUM_LAYERS \
     metanetwork.method=$METHOD \
     model.lora_r=$LORA_R \
-    model.metalora_r=$METALORA_R
+    model.metalora_r=$METALORA_R \
     > tmp_metatrain_$NAME.txt 2>&1 &
