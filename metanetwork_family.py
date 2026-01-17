@@ -25,6 +25,7 @@ class MetanetworkTransformer(nn.Module):
         self.hidden_size = cfg.hidden_size
         self.mean_pool_size = cfg.metanetwork.transformer_cfg.mean_pool_size
         self.idx_range = idx_range
+        self.layer_transformer_first = bool(cfg.metanetwork.transformer_cfg.layer_transformer_first)
 
         self.layer_pe = nn.Parameter(torch.zeros((self.num_layers, self.hidden_size)), requires_grad=True)
         self.token_pe = nn.Parameter(torch.zeros((self.num_mem_token, self.hidden_size)), requires_grad=True)
@@ -50,7 +51,7 @@ class MetanetworkTransformer(nn.Module):
         memory_states = memory_states + self.layer_pe.unsqueeze(-2) + self.token_pe # apply PE
         batch_size = memory_states.shape[0]
         for i in range(len(self.transformer_layers)):
-            if i % 2 == 0:
+            if (i % 2 == 0) == self.layer_transformer_first:
                 memory_states = self.transformer_layers[i](memory_states.transpose(1, 2).flatten(0, 1)).unflatten(0, (batch_size, self.num_mem_token)).transpose(1, 2) # exchange information among layers
             else:
                 memory_states = self.transformer_layers[i](memory_states.flatten(0, 1)).unflatten(0, (batch_size, self.num_layers)) # exchange information among tokens
