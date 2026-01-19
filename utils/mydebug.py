@@ -1,4 +1,4 @@
-from myddp import is_main_process, barrier
+from utils.myddp import is_main_process, barrier
 
 def debug_print_ids(ids, name, tokenizer, exitall=False):
     if is_main_process():
