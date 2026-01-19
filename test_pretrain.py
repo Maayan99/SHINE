@@ -755,22 +755,22 @@ def main(cfg: DictConfig):
             metanetwork_ddp_or_module=metanetwork,
             tokenizer=tokenizer,
             testloader=test_loader_0,
-            split_name=f"{i}",  # e.g. "1".."10"
+            split_name=f"{i}_recon",  # e.g. "1".."10"
             use_metanet=True,
             metalora=metalora,
             device=device,
-            output_suffix="_recon.json",
+            output_suffix=".json",
         )
         test_and_save(
             cfg=cfg,
             metanetwork_ddp_or_module=metanetwork,
             tokenizer=tokenizer,
             testloader=test_loader_1,
-            split_name=f"{i}",  # e.g. "1".."10"
+            split_name=f"{i}_comp",  # e.g. "1".."10"
             use_metanet=True,
             metalora=metalora,
             device=device,
-            output_suffix="_comp.json",
+            output_suffix=".json",
         )
 
     # ===================== visualize after all json exist (PPL + Loss) =====================
