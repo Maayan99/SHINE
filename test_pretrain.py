@@ -69,6 +69,7 @@ from utils.myddp import (
 from utils.myinit import _resolve_device, _import_class
 import re
 from collections import OrderedDict, Counter
+from utils.mydebug import debug_print_ids
 
 # ===================== (matplotlib for visualization) =====================
 import matplotlib
@@ -303,6 +304,13 @@ def test_and_save(
                 hyp = hyp.tolist()
             else:
                 hyp = list(map(int, hyp))
+            
+            if is_main_process():
+                print("token nums:", token_nums[i].item())
+            debug_print_ids(ground_truths_ids[i], "ground_truth_ids", tokenizer)
+            debug_print_ids(gen_out[i], "gen_out", tokenizer)
+            debug_print_ids(ref, "ref", tokenizer)
+            debug_print_ids(hyp, "hyp", tokenizer, exitall=True)
 
             em = exact_prefix_match_ratio(ref, hyp)
 
