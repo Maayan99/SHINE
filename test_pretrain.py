@@ -766,7 +766,7 @@ def main(cfg: DictConfig):
             flush()
             return articles
 
-        lens = [i for i in range(1, 12)]
+        lens = [i for i in range(1, 21)]
         datasets = []
         data_dir = os.path.join("data", "wikitext", "wikitext-2-raw-v1")
         ds = load_dataset(data_dir, split='train')
@@ -870,7 +870,7 @@ def main(cfg: DictConfig):
 
     if is_main_process():
         out_dir = os.path.join(cfg.test.save_path, cfg.test.source)
-        lens = [i for i in range(1, 12)]  # 1..10 => x=100..1000
+        lens = [i for i in range(1, 21)]  # 1..10 => x=100..1000
 
         visualize_recon_comp_curves_separate(
             cfg=cfg,
