@@ -155,9 +155,9 @@ def test_and_save(
     JSON file on rank 0.
 
     Metrics retained:
-      - mean_loss (saved in summary)
-      - PPL (computed from mean_loss => exp(mean_loss))
-      - EM  (here: exact_prefix_match_ratio averaged over samples)
+      - mean_loss/std_loss  (per-sample loss statistics)
+      - PPL mean/std        (per-sample exp(loss) statistics)
+      - EM mean/std         (exact_prefix_match_ratio averaged over samples)
     """
 
     if use_metanet:
@@ -185,7 +185,17 @@ def test_and_save(
     if ddp_is_active():
         dist.barrier()
 
-    # ---------- Figure out where to resume ----------
+    # ===================== NEW: split-level resume =====================
+    # If final merged json already exists, skip generating this split entirely.
+    if os.path.exists(final_out_path):
+        if is_main_process():
+            logger.info(f"[SKIP] Found existing {final_out_path}, skipping split '{split_name}'.")
+        if ddp_is_active():
+            dist.barrier()
+        return
+    # ================================================================
+
+    # ---------- Figure out where to resume (per-rank JSONL) ----------
     start_sample_idx = 0
     if os.path.exists(rank_tmp_path):
         with open(rank_tmp_path, "r", encoding="utf-8") as f:
@@ -268,8 +278,6 @@ def test_and_save(
             ignore_mem_token=True,
             max_new_tokens=cfg.test.max_new_tokens,
             do_sample=False,
-            # num_beams=4,
-            # early_stopping=True,
         )
 
         gen_out = gen_out[:, 9:].to("cpu")
@@ -304,15 +312,6 @@ def test_and_save(
                 hyp = hyp.tolist()
             else:
                 hyp = list(map(int, hyp))
-            
-            # if is_main_process():
-            #     print("token nums:", token_nums[i].item())
-            # debug_print_ids(ground_truths_ids[i], "ground_truth_ids", tokenizer)
-            # debug_print_ids(gen_out[i], "gen_out", tokenizer)
-            # debug_print_ids(ref, "ref", tokenizer)
-            # debug_print_ids(hyp, "hyp", tokenizer)
-            # barrier()
-            # exit()
 
             em = exact_prefix_match_ratio(ref, hyp)
 
@@ -376,35 +375,54 @@ def test_and_save(
         for rec in merged:
             rec.pop("sample_idx", None)
 
-        # ----- Compute summary stats -----
+        # ----- Compute summary stats (mean + std) -----
+        def _finite_float(x):
+            return isinstance(x, (int, float)) and (not math.isnan(x)) and (not math.isinf(x))
+
         losses = [r.get("loss", None) for r in merged]
-        losses = [x for x in losses if isinstance(x, (int, float))]
-        mean_loss = float(sum(losses) / max(len(losses), 1))
+        losses = [float(x) for x in losses if _finite_float(x)]
+
+        loss_mean = float(np.mean(losses)) if losses else float("nan")
+        loss_std = float(np.std(losses, ddof=0)) if losses else float("nan")
+
+        # Per-sample PPL stats: ppl_i = exp(loss_i)
+        ppls = [math.exp(x) for x in losses] if losses else []
+        ppl_mean = float(np.mean(ppls)) if ppls else float("nan")
+        ppl_std = float(np.std(ppls, ddof=0)) if ppls else float("nan")
 
         exacts = []
         lens_ = []
 
         for r in merged:
             st = r.get("statistics", {}) or {}
-            # support either em or exact_prefix_match
             v_em = st.get("em", st.get("exact_prefix_match", None))
-            if isinstance(v_em, (int, float)):
+            if _finite_float(v_em):
                 exacts.append(float(v_em))
-            if isinstance(st.get("length", None), (int, float)):
-                lens_.append(float(st["length"]))
+            v_len = st.get("length", None)
+            if _finite_float(v_len):
+                lens_.append(float(v_len))
 
-        mean_em = float(sum(exacts) / max(len(exacts), 1))
-        mean_length = float(sum(lens_) / max(len(lens_), 1))
-        mean_ppl = float(math.exp(mean_loss))
+        em_mean = float(np.mean(exacts)) if exacts else float("nan")
+        em_std = float(np.std(exacts, ddof=0)) if exacts else float("nan")
+
+        length_mean = float(np.mean(lens_)) if lens_ else float("nan")
+        length_std = float(np.std(lens_, ddof=0)) if lens_ else float("nan")
 
         summary = {
             "num_samples": len(merged),
-            "mean_loss": mean_loss,
+            "mean_loss": loss_mean,  # keep existing key for compatibility
+            "std_loss": loss_std,    # NEW
             "mean_statistics": {
-                "length": mean_length,
-                "em": mean_em,
-                "exact_prefix_match": mean_em,  # compatibility
-                "ppl": mean_ppl,
+                "length": length_mean,
+                "em": em_mean,
+                "exact_prefix_match": em_mean,  # compatibility
+                "ppl": ppl_mean,                # mean(exp(loss_i))
+            },
+            "std_statistics": {                 # NEW
+                "length": length_std,
+                "em": em_std,
+                "exact_prefix_match": em_std,
+                "ppl": ppl_std,
             },
         }
 
@@ -431,89 +449,105 @@ def visualize_recon_comp_curves_separate(
 ):
     """
     Create 4 separate images:
-      1) Recon PPL
-      2) Comp  PPL
-      3) Recon Loss (mean_loss)
-      4) Comp  Loss (mean_loss)
+      1) Recon PPL (mean ± std)
+      2) Comp  PPL (mean ± std)
+      3) Recon Loss (mean ± std)
+      4) Comp  Loss (mean ± std)
 
     x-axis: 100..1000 (len*100)
+
     y-axis:
-      - ppl plots: ppl = exp(mean_loss)
-      - loss plots: mean_loss
+      - ppl plots: mean(exp(loss_i)) and std(exp(loss_i))
+      - loss plots: mean(loss_i) and std(loss_i)
 
     Requirements:
-      - recon/comp PPL images share same y-limits
-      - recon/comp Loss images share same y-limits
+      - recon/comp PPL images share same y-limits (include std bands)
+      - recon/comp Loss images share same y-limits (include std bands)
     """
 
     xs = [l * 100 for l in lens]
 
-    def read_summary(path: str):
+    def read_mean_std(path: str, kind: str) -> Tuple[float, float]:
+        """
+        kind: 'loss' or 'ppl'
+        """
         if not os.path.exists(path):
-            return None
+            return float("nan"), float("nan")
         with open(path, "r", encoding="utf-8") as f:
             obj = json.load(f)
-        return obj.get("summary", None)
+        s = obj.get("summary", {}) or {}
 
-    recon_ppl, comp_ppl = [], []
-    recon_loss, comp_loss = [], []
+        if kind == "loss":
+            return float(s.get("mean_loss", float("nan"))), float(s.get("std_loss", float("nan")))
+        if kind == "ppl":
+            ms = s.get("mean_statistics", {}) or {}
+            ss = s.get("std_statistics", {}) or {}
+            return float(ms.get("ppl", float("nan"))), float(ss.get("ppl", float("nan")))
+        return float("nan"), float("nan")
+
+    recon_ppl_mean, recon_ppl_std = [], []
+    comp_ppl_mean, comp_ppl_std = [], []
+    recon_loss_mean, recon_loss_std = [], []
+    comp_loss_mean, comp_loss_std = [], []
 
     for l in lens:
         recon_path = os.path.join(out_dir, f"{l}_recon.json")
         comp_path = os.path.join(out_dir, f"{l}_comp.json")
 
-        s_recon = read_summary(recon_path)
-        s_comp = read_summary(comp_path)
+        m, s = read_mean_std(recon_path, "ppl")
+        recon_ppl_mean.append(m); recon_ppl_std.append(s)
 
-        # ---- Loss ----
-        if s_recon is not None and isinstance(s_recon.get("mean_loss", None), (int, float)):
-            recon_loss.append(float(s_recon["mean_loss"]))
-        else:
-            recon_loss.append(float("nan"))
+        m, s = read_mean_std(comp_path, "ppl")
+        comp_ppl_mean.append(m); comp_ppl_std.append(s)
 
-        if s_comp is not None and isinstance(s_comp.get("mean_loss", None), (int, float)):
-            comp_loss.append(float(s_comp["mean_loss"]))
-        else:
-            comp_loss.append(float("nan"))
+        m, s = read_mean_std(recon_path, "loss")
+        recon_loss_mean.append(m); recon_loss_std.append(s)
 
-        # ---- PPL = exp(mean_loss) ----
-        if isinstance(recon_loss[-1], (int, float)) and (not math.isnan(recon_loss[-1])) and (not math.isinf(recon_loss[-1])):
-            recon_ppl.append(float(math.exp(recon_loss[-1])))
-        else:
-            recon_ppl.append(float("nan"))
+        m, s = read_mean_std(comp_path, "loss")
+        comp_loss_mean.append(m); comp_loss_std.append(s)
 
-        if isinstance(comp_loss[-1], (int, float)) and (not math.isnan(comp_loss[-1])) and (not math.isinf(comp_loss[-1])):
-            comp_ppl.append(float(math.exp(comp_loss[-1])))
-        else:
-            comp_ppl.append(float("nan"))
+    def _finite(x):
+        return isinstance(x, (int, float)) and (not math.isnan(x)) and (not math.isinf(x))
 
-    def finite_vals(arr):
+    def finite_band(means, stds):
         vals = []
-        for x in arr:
-            if isinstance(x, (int, float)) and (not math.isnan(x)) and (not math.isinf(x)):
-                vals.append(float(x))
+        for m, s in zip(means, stds):
+            if _finite(m) and _finite(s):
+                vals.append(m - s)
+                vals.append(m + s)
         return vals
 
-    # ---- shared y-limits for PPL ----
-    ppl_all = finite_vals(recon_ppl) + finite_vals(comp_ppl)
-    ppl_ylim = None
-    if ppl_all:
-        ymin, ymax = min(ppl_all), max(ppl_all)
-        pad = (ymax - ymin) * 0.05 if ymax > ymin else (abs(ymax) * 0.05 + 1e-6)
-        ppl_ylim = (ymin - pad, ymax + pad)
+    ppl_all = finite_band(recon_ppl_mean, recon_ppl_std) + finite_band(comp_ppl_mean, comp_ppl_std)
+    loss_all = finite_band(recon_loss_mean, recon_loss_std) + finite_band(comp_loss_mean, comp_loss_std)
 
-    # ---- shared y-limits for Loss ----
-    loss_all = finite_vals(recon_loss) + finite_vals(comp_loss)
-    loss_ylim = None
-    if loss_all:
-        ymin, ymax = min(loss_all), max(loss_all)
+    def padded_ylim(all_vals):
+        if not all_vals:
+            return None
+        ymin, ymax = min(all_vals), max(all_vals)
         pad = (ymax - ymin) * 0.05 if ymax > ymin else (abs(ymax) * 0.05 + 1e-6)
-        loss_ylim = (ymin - pad, ymax + pad)
+        return (ymin - pad, ymax + pad)
 
-    def plot_one(xs, ys, title, xlabel, ylabel, xticks, ylim, save_path):
+    ppl_ylim = padded_ylim(ppl_all)
+    loss_ylim = padded_ylim(loss_all)
+
+    def plot_mean_std(xs, mean, std, title, xlabel, ylabel, xticks, ylim, save_path):
         fig = plt.figure(figsize=(8, 5))
         ax = fig.add_subplot(1, 1, 1)
-        ax.plot(xs, ys, marker="o")
+
+        ax.plot(xs, mean, marker="o")
+
+        lower = []
+        upper = []
+        for m, s in zip(mean, std):
+            if _finite(m) and _finite(s):
+                lower.append(m - s)
+                upper.append(m + s)
+            else:
+                lower.append(float("nan"))
+                upper.append(float("nan"))
+
+        ax.fill_between(xs, lower, upper, alpha=0.2)
+
         ax.set_title(title)
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
@@ -526,18 +560,18 @@ def visualize_recon_comp_curves_separate(
         plt.close(fig)
 
     # ---- PPL figures ----
-    plot_one(
-        xs, recon_ppl,
-        title="Recon PPL",
+    plot_mean_std(
+        xs, recon_ppl_mean, recon_ppl_std,
+        title="Recon PPL (mean ± std)",
         xlabel="Context length",
         ylabel="PPL",
         xticks=xs,
         ylim=ppl_ylim,
         save_path=os.path.join(out_dir, recon_ppl_name),
     )
-    plot_one(
-        xs, comp_ppl,
-        title="Comp PPL",
+    plot_mean_std(
+        xs, comp_ppl_mean, comp_ppl_std,
+        title="Comp PPL (mean ± std)",
         xlabel="Context length",
         ylabel="PPL",
         xticks=xs,
@@ -546,18 +580,18 @@ def visualize_recon_comp_curves_separate(
     )
 
     # ---- Loss figures ----
-    plot_one(
-        xs, recon_loss,
-        title="Recon Loss",
+    plot_mean_std(
+        xs, recon_loss_mean, recon_loss_std,
+        title="Recon Loss (mean ± std)",
         xlabel="Context length",
         ylabel="Loss",
         xticks=xs,
         ylim=loss_ylim,
         save_path=os.path.join(out_dir, recon_loss_name),
     )
-    plot_one(
-        xs, comp_loss,
-        title="Comp Loss",
+    plot_mean_std(
+        xs, comp_loss_mean, comp_loss_std,
+        title="Comp Loss (mean ± std)",
         xlabel="Context length",
         ylabel="Loss",
         xticks=xs,
@@ -696,7 +730,7 @@ def main(cfg: DictConfig):
             flush()
             return articles
 
-        lens = [i for i in range(1, 11)]
+        lens = [i for i in range(1, 21)]
         datasets = []
         data_dir = os.path.join("data", "wikitext", "wikitext-2-raw-v1")
         ds = load_dataset(data_dir, split='train')
@@ -716,7 +750,21 @@ def main(cfg: DictConfig):
         raise ValueError(f"Unknown data source: {cfg.test.source}")
 
     pin = device.type == "cuda"
+    out_dir = os.path.join(cfg.test.save_path, cfg.test.source)
+
     for i, (ds, collator) in enumerate(zip(datasets, collators), start=1):
+        # ===================== NEW: split-level skip in main =====================
+        recon_final = os.path.join(out_dir, f"{i}_recon.json")
+        comp_final = os.path.join(out_dir, f"{i}_comp.json")
+        need_recon = not os.path.exists(recon_final)
+        need_comp = not os.path.exists(comp_final)
+
+        if not (need_recon or need_comp):
+            if is_main_process():
+                logger.info(f"[SKIP] Both exist: {recon_final} and {comp_final}. Skipping i={i}.")
+            continue
+        # =======================================================================
+
         test_sampler = (
             DistributedSampler(ds, num_replicas=get_world_size(), rank=get_rank(), shuffle=False)
             if get_world_size() > 1
@@ -745,33 +793,40 @@ def main(cfg: DictConfig):
             persistent_workers=pin and getattr(cfg.test, "num_workers", num_workers_default) > 0,
         )
 
-        ckpt_root = os.path.join(hydra_run_dir, "checkpoints")
-
         if ddp_is_active():
             dist.barrier()
 
-        test_and_save(
-            cfg=cfg,
-            metanetwork_ddp_or_module=metanetwork,
-            tokenizer=tokenizer,
-            testloader=test_loader_0,
-            split_name=f"{i}_recon",  # e.g. "1".."10"
-            use_metanet=True,
-            metalora=metalora,
-            device=device,
-            output_suffix=".json",
-        )
-        test_and_save(
-            cfg=cfg,
-            metanetwork_ddp_or_module=metanetwork,
-            tokenizer=tokenizer,
-            testloader=test_loader_1,
-            split_name=f"{i}_comp",  # e.g. "1".."10"
-            use_metanet=True,
-            metalora=metalora,
-            device=device,
-            output_suffix=".json",
-        )
+        if need_recon:
+            test_and_save(
+                cfg=cfg,
+                metanetwork_ddp_or_module=metanetwork,
+                tokenizer=tokenizer,
+                testloader=test_loader_0,
+                split_name=f"{i}_recon",
+                use_metanet=True,
+                metalora=metalora,
+                device=device,
+                output_suffix=".json",
+            )
+        else:
+            if is_main_process():
+                logger.info(f"[SKIP] Found existing {recon_final}, not regenerating.")
+
+        if need_comp:
+            test_and_save(
+                cfg=cfg,
+                metanetwork_ddp_or_module=metanetwork,
+                tokenizer=tokenizer,
+                testloader=test_loader_1,
+                split_name=f"{i}_comp",
+                use_metanet=True,
+                metalora=metalora,
+                device=device,
+                output_suffix=".json",
+            )
+        else:
+            if is_main_process():
+                logger.info(f"[SKIP] Found existing {comp_final}, not regenerating.")
 
     # ===================== visualize after all json exist (PPL + Loss) =====================
     if ddp_is_active():
@@ -779,7 +834,7 @@ def main(cfg: DictConfig):
 
     if is_main_process():
         out_dir = os.path.join(cfg.test.save_path, cfg.test.source)
-        lens = [i for i in range(1, 11)]  # 1..10 => x=100..1000
+        lens = [i for i in range(1, 21)]  # 1..10 => x=100..1000
 
         visualize_recon_comp_curves_separate(
             cfg=cfg,
