@@ -707,7 +707,7 @@ def main(cfg: DictConfig):
         def is_valid_article(
             text,
             min_english_words=5,
-            max_non_ascii_ratio=0.3,
+            max_non_ascii_ratio=0.001,
         ):
             """
             Returns True if the article looks like valid English text.
