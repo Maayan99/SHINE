@@ -520,15 +520,15 @@ def visualize_recon_comp_curves_separate(
     ppl_all = finite_band(recon_ppl_mean, recon_ppl_std) + finite_band(comp_ppl_mean, comp_ppl_std)
     loss_all = finite_band(recon_loss_mean, recon_loss_std) + finite_band(comp_loss_mean, comp_loss_std)
 
-    def padded_ylim(all_vals):
-        if not all_vals:
-            return None
-        ymin, ymax = min(all_vals), max(all_vals)
-        pad = (ymax - ymin) * 0.05 if ymax > ymin else (abs(ymax) * 0.05 + 1e-6)
-        return (ymin - pad, ymax + pad)
+    # def padded_ylim(all_vals):
+    #     if not all_vals:
+    #         return None
+    #     ymin, ymax = min(all_vals), max(all_vals)
+    #     pad = (ymax - ymin) * 0.05 if ymax > ymin else (abs(ymax) * 0.05 + 1e-6)
+    #     return (ymin - pad, ymax + pad)
 
-    ppl_ylim = padded_ylim(ppl_all)
-    loss_ylim = padded_ylim(loss_all)
+    # ppl_ylim = padded_ylim(ppl_all)
+    # loss_ylim = padded_ylim(loss_all)
 
     def plot_mean_std(xs, mean, std, title, xlabel, ylabel, xticks, ylim, save_path):
         fig = plt.figure(figsize=(8, 5))
@@ -560,6 +560,7 @@ def visualize_recon_comp_curves_separate(
         plt.close(fig)
 
     # ---- PPL figures ----
+    ppl_ylim = (1.0, 2.0)
     plot_mean_std(
         xs, recon_ppl_mean, recon_ppl_std,
         title="Recon PPL (mean ± std)",
@@ -580,6 +581,7 @@ def visualize_recon_comp_curves_separate(
     )
 
     # ---- Loss figures ----
+    loss_ylim = (0.0, 1.0)
     plot_mean_std(
         xs, recon_loss_mean, recon_loss_std,
         title="Recon Loss (mean ± std)",
@@ -730,7 +732,7 @@ def main(cfg: DictConfig):
             flush()
             return articles
 
-        lens = [i for i in range(1, 21)]
+        lens = [i for i in range(1, 12)]
         datasets = []
         data_dir = os.path.join("data", "wikitext", "wikitext-2-raw-v1")
         ds = load_dataset(data_dir, split='train')
@@ -834,7 +836,7 @@ def main(cfg: DictConfig):
 
     if is_main_process():
         out_dir = os.path.join(cfg.test.save_path, cfg.test.source)
-        lens = [i for i in range(1, 21)]  # 1..10 => x=100..1000
+        lens = [i for i in range(1, 12)]  # 1..10 => x=100..1000
 
         visualize_recon_comp_curves_separate(
             cfg=cfg,
