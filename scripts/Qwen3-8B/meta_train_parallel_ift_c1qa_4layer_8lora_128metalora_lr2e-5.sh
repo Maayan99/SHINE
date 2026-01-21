@@ -10,7 +10,7 @@
 #SBATCH -o metalora.out
 #SBATCH -e metalora.err
 
-NAME=8gpu_8lora_128metalora_lr5e-5_grouppretrain_1150
+NAME=8gpu_8lora_128metalora_lr5e-5_grouppretrain_1150_lr2e-5
 NUM_GPUS=8
 MASTER_PORT=18900             
 CONFIG_NAME="Qwen3-8B"
@@ -24,7 +24,7 @@ CONVERSATION_MAX_LEN=100
 RESUME_GLOBAL_STEP=latest
 SOURCE=ift-c1qa
 WARMUP_STEPS=400
-LEARNING_RATE=1e-5
+LEARNING_RATE=2e-5
 TYPE=transformer
 NUM_LAYERS=4
 METHOD=rl

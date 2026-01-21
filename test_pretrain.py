@@ -70,12 +70,12 @@ from utils.myinit import _resolve_device, _import_class
 import re
 from collections import OrderedDict, Counter
 from utils.mydebug import debug_print_ids
-from matplotlib.ticker import MaxNLocator
 
 # ===================== (matplotlib for visualization) =====================
 import matplotlib
 matplotlib.use("Agg")  # headless-friendly
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 # ==========================================================================
 
 logger = get_logger("test")
@@ -154,11 +154,6 @@ def test_and_save(
     Run inference on `testloader`, stream results to disk (per-rank JSONL),
     support resuming from partial output, and finally gather & save a merged
     JSON file on rank 0.
-
-    Metrics retained:
-      - mean_loss/std_loss  (per-sample loss statistics)
-      - PPL mean/std        (per-sample exp(loss) statistics)
-      - EM mean/std         (exact_prefix_match_ratio averaged over samples)
     """
 
     if use_metanet:
@@ -467,7 +462,7 @@ def test_and_save(
         logger.info(f"Saved {len(merged)} predictions (+summary) to {final_out_path}")
 
 
-# ===================== visualize 4 separate figures (PPL + Loss) =====================
+# ===================== NEW: 2x2 ICML Visualization Code =====================
 def visualize_2x2_icml(
     cfg,
     lens: List[int],
@@ -475,14 +470,14 @@ def visualize_2x2_icml(
     save_name: str = "combined_2x2_icml.png"
 ):
     """
-    生成适用于 ICML 单栏 (3.25 inch) 的 2x2 网格图。
-    - 第一行 X 轴标签保留
-    - MaxNLocator = 5
-    - 不共享 Y 轴
-    - 使用固定 Y 轴范围
+    Generate a 2x2 grid figure suitable for an ICML single column.
+    - Explicit X ticks: [100, 300, 500, 700, 900, 1100]
+    - Rotated 30 degrees to prevent crushing
+    - No shared Y axis
+    - Fixed Y axis limits
     """
     
-    # --- 1. 数据准备 (Data Loading) ---
+    # --- 1. Data Preparation ---
     xs = [l * 100 for l in lens]
 
     def _finite(x):
@@ -501,7 +496,6 @@ def visualize_2x2_icml(
             pack = s.get("loss_statistics", None)
             if isinstance(pack, dict):
                 return {k: float(pack.get(k, nan)) for k in ["mean", "std", "median", "p10", "p90"]}
-            # fallback
             return {
                 "mean": float(s.get("mean_loss", nan)),
                 "std": float(s.get("std_loss", nan)),
@@ -512,7 +506,6 @@ def visualize_2x2_icml(
             pack = s.get("ppl_statistics", None)
             if isinstance(pack, dict):
                 return {k: float(pack.get(k, nan)) for k in ["mean", "std", "median", "p10", "p90"]}
-            # fallback
             ms = s.get("mean_statistics", {}) or {}
             ss = s.get("std_statistics", {}) or {}
             return {
@@ -540,11 +533,9 @@ def visualize_2x2_icml(
     recon_ppl, comp_ppl = collect_series("ppl")
     recon_loss, comp_loss = collect_series("loss")
 
-    # --- 2. 设置绘图风格 (Setup Style) ---
-    # ICML 单栏宽度 ~3.25 英寸。高度设为 4.0 以容纳两行标签。
-    # 字体稍微调大一点点，但依然要很小才能放下
+    # --- 2. Setup Style ---
     plt.rcParams.update({
-        'font.family': 'serif',  # 学术论文常用
+        'font.family': 'serif',
         'font.size': 7,
         'axes.labelsize': 7,
         'axes.titlesize': 8,
@@ -555,19 +546,19 @@ def visualize_2x2_icml(
         'lines.markersize': 3
     })
 
-    # sharex=False (默认): 确保每张图都有 X 轴标签
-    # sharey=False (默认): 确保 Y 轴独立
-    fig, axs = plt.subplots(2, 2, figsize=(3.3, 4.0), constrained_layout=True)
+    # sharex=False to show labels on all plots
+    # figsize increased slightly in height to accommodate labels
+    fig, axs = plt.subplots(2, 2, figsize=(3.3, 4.2), constrained_layout=True)
 
-    # --- 3. 绘图 Helper ---
+    # --- 3. Plotting Helper ---
     def plot_on_ax(ax, xs, series, title, ylabel, ylim):
-        # 绘制线条
-        l1, = ax.plot(xs, series["mean"], marker="o", label="Mean", color='#1f77b4') # Blue
-        l2, = ax.plot(xs, series["median"], marker="^", label="Median", linestyle='--', color='#ff7f0e') # Orange
+        # Lines
+        l1, = ax.plot(xs, series["mean"], marker="o", label="Mean", color='#1f77b4') 
+        l2, = ax.plot(xs, series["median"], marker="^", label="Median", linestyle='--', color='#ff7f0e')
         l3, = ax.plot(xs, series["p10"], marker="", linestyle=':', label="P10", color='gray', alpha=0.6)
         l4, = ax.plot(xs, series["p90"], marker="", linestyle=':', label="P90", color='gray', alpha=0.6)
         
-        # 填充区域
+        # Band
         lower, upper = [], []
         for lo, hi in zip(series["p10"], series["p90"]):
             if _finite(lo) and _finite(hi):
@@ -576,269 +567,52 @@ def visualize_2x2_icml(
                 lower.append(float("nan")); upper.append(float("nan"))
         ax.fill_between(xs, lower, upper, color='gray', alpha=0.15)
 
-        # 标题和标签
+        # Labels
         ax.set_title(title, pad=3)
         ax.set_xlabel("Context Length", labelpad=2)
         ax.set_ylabel(ylabel, labelpad=2)
         
-        # 设置固定 Y 轴范围
         if ylim is not None:
             ax.set_ylim(*ylim)
         
-        # 设置 X 轴刻度密度 (nbins=5)
-        ax.xaxis.set_major_locator(MaxNLocator(nbins=5))
+        # --- Force specific X ticks ---
+        specific_ticks = [100, 300, 500, 700, 900, 1100]
+        ax.set_xticks(specific_ticks)
         
-        # 网格
+        # Set x-limits slightly wider
+        ax.set_xlim(50, 1150)
+        
+        # --- Rotate Ticks 30 degrees to prevent crashing ---
+        ax.tick_params(axis='x', which='major', pad=2)
+        plt.setp(ax.get_xticklabels(), rotation=30, ha='right', rotation_mode='anchor')
+        
         ax.grid(True, linestyle='--', alpha=0.3)
-        
-        return [l1, l2, l3] # 返回 handles 用于图例
+        return [l1, l2, l3]
 
-    # --- 4. 绘制所有子图 ---
-    
-    # 设定固定的 Y 轴范围
+    # --- 4. Draw Plots ---
     ppl_ylim = (1.0, 3.0) 
     loss_ylim = (0.0, 1.0)
 
-    # (0,0) Recon PPL
     handles = plot_on_ax(axs[0, 0], xs, recon_ppl, "Recon PPL", "PPL", ppl_ylim)
-    
-    # (0,1) Comp PPL
     plot_on_ax(axs[0, 1], xs, comp_ppl, "Comp PPL", "PPL", ppl_ylim)
-
-    # (1,0) Recon Loss
     plot_on_ax(axs[1, 0], xs, recon_loss, "Recon Loss", "Loss", loss_ylim)
-    
-    # (1,1) Comp Loss
     plot_on_ax(axs[1, 1], xs, comp_loss, "Comp Loss", "Loss", loss_ylim)
 
-    # --- 5. 添加全局图例 ---
-    # 放在 Figure 顶部
+    # --- 5. Global Legend ---
     labels = ["Mean", "Median", "P10/P90"]
     fig.legend(handles, labels, 
                loc='upper center', 
-               bbox_to_anchor=(0.5, 1.04), # 稍微向上偏移出图表区域
+               bbox_to_anchor=(0.5, 1.04),
                ncol=3, 
                frameon=False)
 
-    # --- 6. 保存 ---
+    # --- 6. Save ---
     save_path = os.path.join(out_dir, save_name)
-    # bbox_inches='tight' 防止标签被裁切
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     
     if is_main_process():
         logger.info(f"Saved 2x2 ICML visualization to {save_path}")
     plt.close(fig)
-    
-def visualize_recon_comp_curves_separate(
-    cfg,
-    lens: List[int],
-    out_dir: str,
-    recon_ppl_name: str = "recon_ppl.png",
-    comp_ppl_name: str = "comp_ppl.png",
-    recon_loss_name: str = "recon_loss.png",
-    comp_loss_name: str = "comp_loss.png",
-):
-    """
-    Create 4 separate images:
-      1) Recon PPL (mean/median/p10/p90)
-      2) Comp  PPL (mean/median/p10/p90)
-      3) Recon Loss (mean/median/p10/p90)
-      4) Comp  Loss (mean/median/p10/p90)
-
-    x-axis: 100..2000 (len*100 if lens=1..20)
-
-    Requirements:
-      - recon/comp PPL images share same y-limits (based on all plotted stats)
-      - recon/comp Loss images share same y-limits (based on all plotted stats)
-    """
-    xs = [l * 100 for l in lens]
-
-    def _finite(x):
-        return isinstance(x, (int, float)) and (not math.isnan(x)) and (not math.isinf(x))
-
-    def read_stat_pack(path: str, kind: str) -> Dict[str, float]:
-        """
-        kind: 'loss' or 'ppl'
-        Returns dict: {mean,std,median,p10,p90} (nan if missing)
-        """
-        nan = float("nan")
-        if not os.path.exists(path):
-            return {"mean": nan, "std": nan, "median": nan, "p10": nan, "p90": nan}
-
-        with open(path, "r", encoding="utf-8") as f:
-            obj = json.load(f)
-        s = obj.get("summary", {}) or {}
-
-        if kind == "loss":
-            pack = s.get("loss_statistics", None)
-            if isinstance(pack, dict):
-                return {
-                    "mean": float(pack.get("mean", nan)),
-                    "std": float(pack.get("std", nan)),
-                    "median": float(pack.get("median", nan)),
-                    "p10": float(pack.get("p10", nan)),
-                    "p90": float(pack.get("p90", nan)),
-                }
-            # fallback for older outputs
-            return {
-                "mean": float(s.get("mean_loss", nan)),
-                "std": float(s.get("std_loss", nan)),
-                "median": nan,
-                "p10": nan,
-                "p90": nan,
-            }
-
-        if kind == "ppl":
-            pack = s.get("ppl_statistics", None)
-            if isinstance(pack, dict):
-                return {
-                    "mean": float(pack.get("mean", nan)),
-                    "std": float(pack.get("std", nan)),
-                    "median": float(pack.get("median", nan)),
-                    "p10": float(pack.get("p10", nan)),
-                    "p90": float(pack.get("p90", nan)),
-                }
-            # fallback for older outputs
-            ms = s.get("mean_statistics", {}) or {}
-            ss = s.get("std_statistics", {}) or {}
-            return {
-                "mean": float(ms.get("ppl", nan)),
-                "std": float(ss.get("ppl", nan)),
-                "median": nan,
-                "p10": nan,
-                "p90": nan,
-            }
-
-        return {"mean": nan, "std": nan, "median": nan, "p10": nan, "p90": nan}
-
-    def collect_series(kind: str):
-        """
-        Returns:
-          recon: dict of lists for each stat key
-          comp : dict of lists for each stat key
-        """
-        keys = ["mean", "median", "p10", "p90"]
-        recon = {k: [] for k in keys}
-        comp  = {k: [] for k in keys}
-
-        for l in lens:
-            recon_path = os.path.join(out_dir, f"{l}_recon.json")
-            comp_path  = os.path.join(out_dir, f"{l}_comp.json")
-
-            rpack = read_stat_pack(recon_path, kind)
-            cpack = read_stat_pack(comp_path, kind)
-
-            for k in keys:
-                recon[k].append(rpack[k])
-                comp[k].append(cpack[k])
-
-        return recon, comp
-
-    def compute_shared_ylim(recon: Dict[str, List[float]], comp: Dict[str, List[float]]):
-        vals = []
-        for series_dict in (recon, comp):
-            for k, arr in series_dict.items():
-                for v in arr:
-                    if _finite(v):
-                        vals.append(v)
-        if not vals:
-            return None
-        ymin, ymax = min(vals), max(vals)
-        pad = (ymax - ymin) * 0.05 if ymax > ymin else (abs(ymax) * 0.05 + 1e-6)
-        return (ymin - pad, ymax + pad)
-
-    def plot_multi(xs, series: Dict[str, List[float]], title, xlabel, ylabel, xticks, ylim, save_path):
-        """
-        Plot mean/median/p10/p90 as 4 curves in one figure.
-        Also fill the band between p10 and p90 when both exist.
-        """
-        fig = plt.figure(figsize=(8, 5))
-        ax = fig.add_subplot(1, 1, 1)
-
-        # Curves
-        ax.plot(xs, series["mean"], marker="o", label="mean")
-        ax.plot(xs, series["median"], marker="o", label="median")
-        ax.plot(xs, series["p10"], marker="o", label="p10")
-        ax.plot(xs, series["p90"], marker="o", label="p90")
-
-        # Band between p10 and p90 (optional)
-        lower = []
-        upper = []
-        for lo, hi in zip(series["p10"], series["p90"]):
-            if _finite(lo) and _finite(hi):
-                lower.append(lo)
-                upper.append(hi)
-            else:
-                lower.append(float("nan"))
-                upper.append(float("nan"))
-        ax.fill_between(xs, lower, upper, alpha=0.15, label="p10–p90 band")
-
-        ax.set_title(title)
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-        ax.set_xticks(xticks)
-        if ylim is not None:
-            ax.set_ylim(*ylim)
-        ax.grid(True)
-        ax.legend()
-        fig.tight_layout()
-        fig.savefig(save_path, dpi=200)
-        plt.close(fig)
-
-    # ---- PPL figures ----
-    recon_ppl, comp_ppl = collect_series("ppl")
-    ppl_ylim = (1.0, 3.0) # compute_shared_ylim(recon_ppl, comp_ppl)
-
-    plot_multi(
-        xs, recon_ppl,
-        title="Recon PPL (mean/median/p10/p90)",
-        xlabel="Context length",
-        ylabel="PPL",
-        xticks=xs,
-        ylim=ppl_ylim,
-        save_path=os.path.join(out_dir, recon_ppl_name),
-    )
-    plot_multi(
-        xs, comp_ppl,
-        title="Comp PPL (mean/median/p10/p90)",
-        xlabel="Context length",
-        ylabel="PPL",
-        xticks=xs,
-        ylim=ppl_ylim,
-        save_path=os.path.join(out_dir, comp_ppl_name),
-    )
-
-    # ---- Loss figures ----
-    recon_loss, comp_loss = collect_series("loss")
-    loss_ylim = (0.0, 1.0) # compute_shared_ylim(recon_loss, comp_loss)
-
-    plot_multi(
-        xs, recon_loss,
-        title="Recon Loss (mean/median/p10/p90)",
-        xlabel="Context length",
-        ylabel="Loss",
-        xticks=xs,
-        ylim=loss_ylim,
-        save_path=os.path.join(out_dir, recon_loss_name),
-    )
-    plot_multi(
-        xs, comp_loss,
-        title="Comp Loss (mean/median/p10/p90)",
-        xlabel="Context length",
-        ylabel="Loss",
-        xticks=xs,
-        ylim=loss_ylim,
-        save_path=os.path.join(out_dir, comp_loss_name),
-    )
-
-    if is_main_process():
-        logger.info(
-            "Saved visualizations: "
-            f"{os.path.join(out_dir, recon_ppl_name)}, "
-            f"{os.path.join(out_dir, comp_ppl_name)}, "
-            f"{os.path.join(out_dir, recon_loss_name)}, "
-            f"{os.path.join(out_dir, comp_loss_name)}"
-        )
 # ==============================================================================
 
 
@@ -1094,28 +868,19 @@ def main(cfg: DictConfig):
             if is_main_process():
                 logger.info(f"[SKIP] Found existing {comp_final}, not regenerating.")
 
-    # ===================== visualize after all json exist (PPL + Loss) =====================
+    # ===================== visualize 2x2 grid =====================
     if ddp_is_active():
         dist.barrier()  # ensure rank0 can see all outputs
 
     if is_main_process():
         out_dir = os.path.join(cfg.test.save_path, cfg.test.source)
-        lens = [i for i in range(1, 12)]  # 1..10 => x=100..1000
+        lens = [i for i in range(1, 12)]
 
-        # visualize_recon_comp_curves_separate(
-        #     cfg=cfg,
-        #     lens=lens,
-        #     out_dir=out_dir,
-        #     recon_ppl_name="recon_ppl.png",
-        #     comp_ppl_name="comp_ppl.png",
-        #     recon_loss_name="recon_loss.png",
-        #     comp_loss_name="comp_loss.png",
-        # )
         visualize_2x2_icml(
             cfg=cfg,
             lens=lens,
             out_dir=out_dir,
-            save_name="combined_2x2_results.png"  # 或 .pdf
+            save_name="results_2x2.png"  # Or use .pdf
         )
     # ==============================================================================
 
