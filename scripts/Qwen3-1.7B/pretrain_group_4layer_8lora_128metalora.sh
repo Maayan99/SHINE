@@ -11,7 +11,7 @@
 #SBATCH -e metalora.err
 
 NAME=1.7B_8gpu_8lora_128metalora_lr5e-5_grouppretrain_1150 # 4layer
-NUM_GPUS=2
+NUM_GPUS=8
 MASTER_PORT=18920       
 CONFIG_NAME="Qwen3-1.7B"       
 SOURCE=grouptransmla
