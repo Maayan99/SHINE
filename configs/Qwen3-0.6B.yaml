@@ -1,16 +1,16 @@
 name: default
-mode: train
+mode: train # pretrain | grain
 
 resume_global_step: -1  # -1: don't resume,   int: resume from global steps,  latest: resume from latest
-test_global_step: latest # int: test at global steps,  latest: test at latest,   best: test at best checkpoint
+test_global_step: latest # int: test at global steps,  latest: test at latest
 
 run:
   seed: 42
-  use_amp: false              # set false to disable AMP (can't be used now, bugs)
+  use_amp: false           # set false to disable AMP (can't be used now, bugs)
   gradient_accumulation_steps: 4
   device: cuda                # auto | cuda | cpu
-  use_gradient_checkpoint: false
-
+  use_gradient_checkpoint: true
+  
 paths:
   model_path: "./models/Qwen3-0.6B"
   output_dir: "qwen-finetuned"   # final save; checkpoints go under Hydra's run dir unless overridden
@@ -19,7 +19,7 @@ data:
   context_max_length: 1024
   conversation_max_length: 1024
   train_batch_size: 1
-  eval_batch_size: 2
+  eval_batch_size: 1
   num_workers: 4
   # Switch between "mock" and "hf" when you add a real dataset loader
   source: squad
@@ -37,6 +37,10 @@ pretrain:
   max_completion_ratio: 0.3
   min_completion_ratio: 0.1
 
+visualize:
+  visualize_steps: -1
+  visualize_mode: "pretrain"
+
 logging:
   logging_steps: 1
 
@@ -50,8 +54,9 @@ save:
 # If you use a custom local module for LoRA-wrapped Qwen, keep it here.
 # Otherwise, replace with a transformers model import path and update train.py accordingly.
 model:
-  lora_r: 16
-  metalora_r: 16
+  lora_r: 4
+  metalora_r: 4
+  ift_additional_metalora_r: -1 # <0: finetune pretrain metalora;  >=0: freeze pretrain metalora, add new metalora with this r
   num_mem_token: ${num_mem_token}
   metamodel_class_path: "LoraQwen.LoraQwen3ForCausalLM" # module.ClassName
   config_class_path: "LoraQwen.Qwen3Config" # module.ClassName
@@ -60,28 +65,53 @@ model:
 
 metanetwork:
   type: "transformer"
+  method: "rl"
   transformer_cfg:
     encoder_cfg:
       d_model: 1024 # Fixed
-      nhead: 16
+      nhead: 8
       dim_feedforward: 2048
       dropout: 0
       activation: gelu
       layer_norm_eps: 0.00001
       batch_first: True
       norm_first: False
-      bias: false
+      bias: True
+    couple_encoder_cfg:
+      d_model: 1024
+      nhead: 8
+      dim_feedforward: 2048
+      dropout: 0
+      activation: gelu
+      layer_norm_eps: 0.00001
+      batch_first: True
+      norm_first: False
+      bias: True
+    layer_transformer_first: True
     mean_pool_size: 1 # Don't use
-    num_layers: 8 # Must be even
+    num_layers: 4 # Must be even
+    couple_num_layers: 0 # if > 0, use couple layers
     scale: 0.001
+  linear_cfg:
+    num_layers: 4
+    linear_hidden_dim: 8192
+    scale: 0.001
+    bias: false
+  linear_gate_cfg:
+    num_layers: 4
+    linear_hidden_dim: 8192
+    scale: 0.001
+    bias: false
+    
 
 test:
   source: squad
-  context_len: 512
-  max_length: 4096
-  max_new_tokens: 1024
-  save_path: test
-  batch_size: 16
+  context_avg_len: 512
+  context_max_length: 1300
+  conversation_max_length: 128
+  max_new_tokens: 128
+  save_path: test/${name}
+  batch_size: 4
   num_workers: 4 
   judger_model: gpt-4.1-nano
   max_concurrency: 32

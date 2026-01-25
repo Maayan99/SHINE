@@ -729,7 +729,7 @@ def benchmark_generate_multiturn(
             do_sample=False,
             eos_token_id=None,  # disable EOS to force fixed length
             pad_token_id=tokenizer.pad_token_id,
-            loradict=lora_dict,
+            loradict=None,
             ignore_mem_token=True,
         )
         if device.type == "cuda":
@@ -893,18 +893,20 @@ def main(cfg: DictConfig):
     if is_main_process():
         logger.info("Preparing data...")
     if "msmacro-mqa" in test_sources:
-        # with open("data/msmacro-mqa/test.jsonl", "r") as f:
-        #     data = [json.loads(line) for line in f.readlines()]
-        # random.seed(42)
-        # random.shuffle(data)
-        # data = data[:1000]
-        # mqa_dataset = MQADataset(data)
-        with open("data/msmacro-mqa/test_sft.jsonl", "r") as f:
-            sft_data = [json.loads(line) for line in f.readlines()]
-        random.shuffle(sft_data)
-        mqa_sft_dataset = SFTDataset(sft_data)
-        test_name.append("msmacro-mqa_sft")
-        test_datasets.append(mqa_sft_dataset)
+        with open("data/msmacro-mqa/test.jsonl", "r") as f:
+            data = [json.loads(line) for line in f.readlines()]
+        random.seed(42)
+        random.shuffle(data)
+        data = data[:1000]
+        mqa_dataset = MQADataset(data)
+        test_name.append("msmacro-mqa")
+        test_datasets.append(mqa_dataset)
+        # with open("data/msmacro-mqa/test_sft.jsonl", "r") as f:
+        #     sft_data = [json.loads(line) for line in f.readlines()]
+        # random.shuffle(sft_data)
+        # mqa_sft_dataset = SFTDataset(sft_data)
+        # test_name.append("msmacro-mqa_sft")
+        # test_datasets.append(mqa_sft_dataset)
     else:
         raise ValueError(f"Unknown data source: {cfg.test.source}")
 
@@ -1062,68 +1064,87 @@ def main(cfg: DictConfig):
         #     logger.info(f"Generation results saved to {output_path}")
         #     logger.info(f"Generation stats saved to {stats_path}")
         
-        # os.makedirs(os.path.join(out_dir, "contextlen"), exist_ok=True)
-        # for context_length in [500, 1000, 1500, 2000]:
-        #     result = benchmark_generate_multiturn(
-        #         metanetwork,
-        #         tokenizer,
-        #         device,
-        #         max_conversation_length=3000,
-        #         max_new_tokens=500,
-        #         context_length=0,
-        #         num_turns=10,
-        #         question_length=50,
-        #         answer_length=50,
-        #         use_metanet=True,
-        #         metalora=metalora,
-        #         evidence_length=context_length,
-        #         warmup=2,
-        #     )
-        #     if is_main_process():
-        #         benchmark_path = os.path.join(out_dir, "contextlen", f"metanet_{context_length}.json")
-        #         with open(benchmark_path, "w") as f:
-        #             json.dump(result, f, indent=2)
-        #         logger.info(f"Generation benchmark with metanet saved to {benchmark_path}")
-            # result = benchmark_generate_multiturn(
-            #     metanetwork,
-            #     tokenizer,
-            #     device,
-            #     context_length=context_length,
-            #     num_turns=10,
-            #     qa_pairs_per_turn=10,
-            #     question_length=50,
-            #     answer_length=50,
-            #     use_metanet=False,
-            #     warmup=2,
-            # )
-            # if is_main_process():
-            #     benchmark_path = os.path.join(out_dir, "contextlen", f"no_metanet_{context_length}.json")
-            #     with open(benchmark_path, "w") as f:
-            #         json.dump(result, f, indent=2)
-            #     logger.info(f"Generation benchmark without metanet saved to {benchmark_path}")
+        result = benchmark_generate_multiturn(
+            metanetwork,
+            tokenizer,
+            device,
+            max_conversation_length=3000,
+            max_new_tokens=500,
+            context_length=0,
+            num_turns=15,
+            question_length=20,
+            answer_length=20,
+            use_metanet=True,
+            metalora=metalora,
+            evidence_length=800,
+            warmup=2,
+        )
+        if is_main_process():
+            benchmark_path = os.path.join(out_dir, f"metanet_reproduce.json")
+            with open(benchmark_path, "w") as f:
+                json.dump(result, f, indent=2)
+            logger.info(f"Generation benchmark with metanet saved to {benchmark_path}")
+        result = benchmark_generate_multiturn(
+            metanetwork,
+            tokenizer,
+            device,
+            max_conversation_length=3000,
+            max_new_tokens=500,
+            context_length=820,
+            num_turns=15,
+            question_length=20,
+            answer_length=20,
+            use_metanet=False,
+            evidence_length=0,
+            warmup=2,
+        )
+        if is_main_process():
+            benchmark_path = os.path.join(out_dir, f"incontext_reproduce.json")
+            with open(benchmark_path, "w") as f:
+                json.dump(result, f, indent=2)
+            logger.info(f"Generation benchmark without metanet saved to {benchmark_path}")
+        result = benchmark_generate_multiturn(
+            metanetwork,
+            tokenizer,
+            device,
+            max_conversation_length=3000,
+            max_new_tokens=500,
+            context_length=0,
+            num_turns=15,
+            question_length=20,
+            answer_length=20,
+            use_metanet=False,
+            evidence_length=0,
+            warmup=2,
+        )
+        if is_main_process():
+            benchmark_path = os.path.join(out_dir, f"naive_reproduce.json")
+            with open(benchmark_path, "w") as f:
+                json.dump(result, f, indent=2)
+            logger.info(f"Generation benchmark naive saved to {benchmark_path}")
         
         ################################  SFT ################################
-        sft_loader = DataLoader(
-            mqa_sft_dataset,
-            batch_size=1,
-            shuffle=False,
-            sampler=test_sampler,
-            collate_fn=sft_collator,
-            pin_memory=pin,
-            num_workers=getattr(cfg.test, "num_workers", num_workers_default),
-            persistent_workers=pin and getattr(cfg.test, "num_workers", num_workers_default) > 0,
-        )
+        # sft_loader = DataLoader(
+        #     mqa_sft_dataset,
+        #     batch_size=1,
+        #     shuffle=False,
+        #     sampler=test_sampler,
+        #     collate_fn=sft_collator,
+        #     pin_memory=pin,
+        #     num_workers=getattr(cfg.test, "num_workers", num_workers_default),
+        #     persistent_workers=pin and getattr(cfg.test, "num_workers", num_workers_default) > 0,
+        # )
         
-        num_sample=1  # 10, 5, 3
-        num_epoch=10 # 5 as default
-        results, stats = sft_lora(metanetwork.metamodel, sft_loader, 8, 0.001, device, tokenizer, num_sample=num_sample, num_epoch=num_epoch)
-        suffix = f"{num_sample}sample_{num_epoch}epoch"
-        with open(os.path.join(out_dir, f"sft_results_{suffix}.json"), "w") as f:
-            json.dump(results, f, indent=2)
-        with open(os.path.join(out_dir, f"sft_stats_{suffix}.json"), "w") as f:
-            json.dump(stats, f, indent=2)
-        logger.info(f"SFT results saved to {os.path.join(out_dir, f'sft_results_{suffix}.json')}")
-        logger.info(f"SFT stats saved to {os.path.join(out_dir, f'sft_stats_{suffix}.json')}")
+        # num_sample=1  # 10, 5, 3
+        # num_epoch=10 # 5 as default
+        # results, stats = sft_lora(metanetwork.metamodel, sft_loader, 8, 0.001, device, tokenizer, num_sample=num_sample, num_epoch=num_epoch)
+        # suffix = f"{num_sample}sample_{num_epoch}epoch"
+        # with open(os.path.join(out_dir, f"sft_results_{suffix}.json"), "w") as f:
+        #     json.dump(results, f, indent=2)
+        # with open(os.path.join(out_dir, f"sft_stats_{suffix}.json"), "w") as f:
+        #     json.dump(stats, f, indent=2)
+        # logger.info(f"SFT results saved to {os.path.join(out_dir, f'sft_results_{suffix}.json')}")
+        # logger.info(f"SFT stats saved to {os.path.join(out_dir, f'sft_stats_{suffix}.json')}")
         
     
 
