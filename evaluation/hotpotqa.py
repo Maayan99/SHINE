@@ -26,7 +26,7 @@ def f1_score(ground_truth, prediction):
     normalized_prediction = normalize_answer(prediction)
     normalized_ground_truth = normalize_answer(ground_truth)
 
-    ZERO_METRIC = (0, 0, 0)
+    ZERO_METRIC = 0
 
     if normalized_prediction in ['yes', 'no', 'noanswer'] and normalized_prediction != normalized_ground_truth:
         return ZERO_METRIC

@@ -483,6 +483,22 @@ class MQADataset(Dataset):
             questions.append(conv['question'])
             answers.append(conv['answer'])
         return {"evidence": contexts, "conversations": final_conversations, "questions": questions, "answers": answers}
+
+class HumanDataset(Dataset):
+    def __init__(
+        self,
+        data,
+    ):
+        self.data = data
+    
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        item = self.data[idx]
+        contexts = item['context']
+        questions = item['questions']
+        return {"evidence": contexts, "questions": questions}
     
 class SFTDataset(Dataset):
     def __init__(
@@ -1310,6 +1326,60 @@ class MQACollator(BaseCollator):
             "input_attention_mask": input_attention_mask,
             "questions": [b['questions'] for b in batch],
             "answers": [b['answers'] for b in batch],
+        }
+        
+@dataclass
+class HumanCollator(BaseCollator):
+    tokenizer: Any
+    context_max_length: int = 1024
+    conversation_max_length: int = 1024
+    cfg: Any = None
+    sys_msg: bool = False
+    no_evidence: bool = False
+
+    def __call__(self, batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+        evidence_texts = [t['evidence'] for t in batch]
+        questions = [b['questions'] for b in batch]
+        # if isinstance(conversation_texts[0], Column):
+        #     conversation_texts = list(conversation_texts[0])  # or conversation_texts[0][:]
+        if self.sys_msg:
+            if self.no_evidence:
+                PRMOPT = "You are a helpful assistant. Answer the question concisely with short words or phrases. Answer the question directly and output nothing else. Never say you don't know the answer. Never enter think mode."
+                initial_messages = [{"role": "system", "content": f"{PRMOPT}"} for _ in questions]
+            else:
+                PRMOPT = "You are a helpful assistant, answer the questions based on the given context. Each answer must be directly extractable from the context (i.e., an exact span or minor paraphrase for fluency). Do not invent information. Answer the question directly and output nothing else. Never enter think mode.\n\nContext: "
+                initial_messages = [{"role": "system", "content": f"{PRMOPT}{evidence}"} for evidence in evidence_texts]
+        else:
+            initial_messages = [{} for _ in questions]
+
+        evidence_enc = self.tokenizer(
+            evidence_texts,
+            max_length=self.context_max_length,
+            truncation=True,
+            return_tensors="pt",
+            padding="max_length",
+        )
+        evidence_ids = evidence_enc["input_ids"]
+        evidence_attention_mask = evidence_enc["attention_mask"]
+            
+        # res = "input"
+        # tokens = self.tokenizer.convert_ids_to_tokens(input_ids[0])
+        # for i, t in enumerate(tokens):
+        #     res = f"{res}\n{i}: token_ids: {t} attention_mask: {input_attention_mask[0][i]} label: {labels[0][i] if labels is not None else 'N/A'}"
+        # res = f"{res}\nevidence"
+        # tokens = self.tokenizer.convert_ids_to_tokens(evidence_ids[0])
+        # for i, t in enumerate(tokens):
+        #     res = f"{res}\n{i}: token_ids: {t} attention_mask: {evidence_attention_mask[0][i]}"
+        # # res = f"{res}\ncontext len:{batch[0]['contextlen']} conversation len:{batch[0]['conversationlen']}"
+        # res = f"{res}\n\n"
+        # print(res, flush=True)
+                
+        return {
+            "initial_messages": initial_messages,
+            "evidence": evidence_texts,
+            "evidence_ids": evidence_ids,
+            "evidence_attention_mask": evidence_attention_mask,
+            "questions": [b['questions'] for b in batch],
         }
 
 @dataclass

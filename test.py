@@ -513,7 +513,10 @@ def main(cfg: DictConfig):
                 os.path.join("data", "squad"),
                 split="validation",
             )
-            datasets.append(GroupedSquadDataset(data, tokenizer, cfg.test.context_avg_len))
+            data = data.shuffle(seed=42)
+            N = 1000
+            subset = data.select(range(N))
+            datasets.append(GroupedSquadDataset(subset, tokenizer, cfg.test.context_avg_len))
             if is_main_process():
                 logger.info(f"Loaded {cfg.test.source}/{testset} with {len(data)} samples")
         collator = SquadCollator(
@@ -542,7 +545,10 @@ def main(cfg: DictConfig):
         datasets = []
         for testset in names:
             data = load_dataset("hotpotqa/hotpot_qa", "distractor", split="validation")
-            datasets.append(HotpotqaDataset(data))
+            data = data.shuffle(seed=42)
+            N = 1000
+            subset = data.select(range(N))
+            datasets.append(HotpotqaDataset(subset))
             if is_main_process():
                 logger.info(f"Loaded {cfg.test.source}/{testset} with {len(data)} samples")
         collator = SquadCollator(
@@ -571,7 +577,10 @@ def main(cfg: DictConfig):
         datasets = []
         for testset in names:
             data = load_dataset("dgslibisey/MuSiQue", split="validation")
-            datasets.append(MusiqueDataset(data))
+            data = data.shuffle(seed=42)
+            N = 1000
+            subset = data.select(range(N))
+            datasets.append(MusiqueDataset(subset))
             if is_main_process():
                 logger.info(f"Loaded {cfg.test.source}/{testset} with {len(data)} samples")
         collator = SquadCollator(
@@ -600,7 +609,10 @@ def main(cfg: DictConfig):
         datasets = []
         for testset in names:
             data = load_dataset("framolfese/2WikiMultihopQA", split="validation")
-            datasets.append(HotpotqaDataset(data))
+            data = data.shuffle(seed=42)
+            N = 1000
+            subset = data.select(range(N))
+            datasets.append(HotpotqaDataset(subset))
             if is_main_process():
                 logger.info(f"Loaded {cfg.test.source}/{testset} with {len(data)} samples")
         collator = SquadCollator(
@@ -629,7 +641,10 @@ def main(cfg: DictConfig):
         datasets = []
         for testset in names:
             data = load_dataset('microsoft/ms_marco', 'v1.1', split='test')
-            datasets.append(MsmarcoDataset(data))
+            data = data.shuffle(seed=42)
+            N = 1000
+            subset = data.select(range(N))
+            datasets.append(MsmarcoDataset(subset))
             if is_main_process():
                 logger.info(f"Loaded {cfg.test.source}/{testset} with {len(data)} samples")
         collator = SquadCollator(
@@ -658,7 +673,10 @@ def main(cfg: DictConfig):
         datasets = []
         for testset in names:
             data = load_dataset('microsoft/ms_marco', 'v2.1', split='validation')
-            datasets.append(MsmarcoDataset(data))
+            data = data.shuffle(seed=42)
+            N = 1000
+            subset = data.select(range(N))
+            datasets.append(MsmarcoDataset(subset))
             if is_main_process():
                 logger.info(f"Loaded {cfg.test.source}/{testset} with {len(data)} samples")
         collator = SquadCollator(
@@ -743,31 +761,31 @@ def main(cfg: DictConfig):
             output_suffix=".json",
         )
 
-        # Uncomment if you want baselines too (will also produce *_results.json for each)
-        test_and_save(
-            cfg=cfg,
-            metanetwork_ddp_or_module=metanetwork,
-            tokenizer=tokenizer,
-            testloader=test_loader_no_metanet,
-            split_name=f"{names[i]}_no_metanet",
-            f1_metric=f1_metric,
-            use_metanet=False,
-            metalora=None,
-            device=device,
-            output_suffix=".json",
-        )
-        test_and_save(
-            cfg=cfg,
-            metanetwork_ddp_or_module=metanetwork,
-            tokenizer=tokenizer,
-            testloader=test_loader_only_question,
-            split_name=f"{names[i]}_only_question",
-            f1_metric=f1_metric,
-            use_metanet=False,
-            metalora=None,
-            device=device,
-            output_suffix=".json",
-        )
+        # # Uncomment if you want baselines too (will also produce *_results.json for each)
+        # test_and_save(
+        #     cfg=cfg,
+        #     metanetwork_ddp_or_module=metanetwork,
+        #     tokenizer=tokenizer,
+        #     testloader=test_loader_no_metanet,
+        #     split_name=f"{names[i]}_no_metanet",
+        #     f1_metric=f1_metric,
+        #     use_metanet=False,
+        #     metalora=None,
+        #     device=device,
+        #     output_suffix=".json",
+        # )
+        # test_and_save(
+        #     cfg=cfg,
+        #     metanetwork_ddp_or_module=metanetwork,
+        #     tokenizer=tokenizer,
+        #     testloader=test_loader_only_question,
+        #     split_name=f"{names[i]}_only_question",
+        #     f1_metric=f1_metric,
+        #     use_metanet=False,
+        #     metalora=None,
+        #     device=device,
+        #     output_suffix=".json",
+        # )
 
     ddp_cleanup_if_needed()
 

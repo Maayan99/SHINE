@@ -11,19 +11,17 @@
 #SBATCH -e test.err
 
 NAME=8gpu_8lora_128metalora_lr5e-5_grouppretrain_1150
-NUM_GPUS=1
+NUM_GPUS=8
 MASTER_PORT=18900             
 CONFIG_NAME="Qwen3-8B"       
 TEST_BATCH_SIZE=4
-TEST_GLOBAL_STEP=20000
-TEST_SOURCE=msmarco_v2 # squad hotpotqa 2wikimultihopqa musique msmarco_v1 msmarco_v2
+TEST_GLOBAL_STEP=epoch-2
 NUM_LAYERS=4
 METHOD=rl
-CONTEXT_AVG_LEN=2048
-CONTEXT_MAX_LENGTH=4500
-CONVERSATION_MAX_LENGTH=300
 LORA_R=8
-METALORA_R=8
+METALORA_R=128
+CONTEXT_MAX_LENGTH=1550
+CONVERSATION_MAX_LENGTH=5000
         
 
 # Find available port
@@ -39,23 +37,16 @@ export OMP_NUM_THREADS=4
 export NCCL_DEBUG=WARN
 export TORCH_DISTRIBUTED_DEBUG=INFO
 
-nohup torchrun \
-    --nproc_per_node=$NUM_GPUS \
-    --nnodes=1 \
-    --node_rank=0 \
-    --master_addr="127.0.0.1" \
-    --master_port=$MASTER_PORT \
-    test.py \
+
+python test_human.py \
     --config-name $CONFIG_NAME \
     name=$NAME \
     test.batch_size=$TEST_BATCH_SIZE \
     test_global_step=$TEST_GLOBAL_STEP \
-    test.source=$TEST_SOURCE \
     metanetwork.transformer_cfg.num_layers=$NUM_LAYERS \
     metanetwork.method=$METHOD \
-    test.context_avg_len=$CONTEXT_AVG_LEN \
     model.lora_r=$LORA_R \
     model.metalora_r=$METALORA_R \
     test.context_max_length=$CONTEXT_MAX_LENGTH \
     test.conversation_max_length=$CONVERSATION_MAX_LENGTH \
-    > tmp_test_${TEST_SOURCE}_$NAME.txt 2>&1 &
+    > tmp_test_human_$NAME.txt 2>&1 &
