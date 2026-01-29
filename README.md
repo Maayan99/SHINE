@@ -24,15 +24,3 @@ hf download bigai-nlco/LooGLE --repo-type dataset --local-dir data/loogle
 hf download rajpurkar/squad --repo-type dataset --local-dir data/squad
 hf download ArmelR/the-pile-splitted --repo-type dataset --local-dir data/Pile
 ```
-
-0.6B:
-reconstruction
-20% add completion
-
-8B:
-reconstruction
-10% add completion
-
-no bias improves performance
-
-current: lora 4 mean pool 2
