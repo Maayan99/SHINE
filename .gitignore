@@ -33,4 +33,5 @@ checkpoints_oldchatlen
 data_preprocess
 generate_loradict_statistics.py
 run.sh
+tmp
 

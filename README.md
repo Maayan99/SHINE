@@ -1,26 +1,92 @@
-Env
+# 🔆 SHINE: A Scalable In-Context Hypernetwork for Mapping Context to LoRA in a Single Pass
+
+<!-- <div align="center">
+
+这里放置徽章，例如 arXiv 链接、许可证、Python 版本等
+[![arXiv](https://img.shields.io/badge/arXiv-[Paper ID]-b31b1b.svg)](https://arxiv.org/abs/[Paper ID])
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Python](https://img.shields.io/badge/Python-3.8%2B-green.svg)](https://www.python.org/)
+
+</div> -->
+
+<!-- ## ✨ Features
+
+- 🔥 **[核心特性 1]**: [简短描述，例如：High efficiency implementation...]
+- 🧠 **[核心特性 2]**: [简短描述，例如：Context-aware mechanism...]
+- 🎯 **[核心特性 3]**: [简短描述，例如：State-of-the-art performance on...]
+- ⚡ **[核心特性 4]**: [简短描述，例如：Easy integration with existing pipelines...] -->
+
+<!-- ## 🎯 What is [Project Name]?
+
+<div align="center">
+  <!-- 替换为你的架构图或演示图 -->
+  <!-- <img src="docs/framework.jpg" alt="Framework Overview" width="600"/>
+</div> -->
+<!-- 
+[Project Name] is a framework for [简述项目的主要功能和目标]. It addresses the challenge of [描述解决的问题] by [描述你的方法/技术手段].
+
+Compared to conventional solutions:
+
+- **vs Method A**: [描述对比优势，例如：More efficient memory usage.]
+- **vs Method B**: [描述对比优势，例如：Better accuracy without retraining.]
+- It supports [列举支持的任务或场景]. -->
+
+## ⚡ Quick Start
+First clone this repo and cd into it
+```bash
+git clone <repo_name>
+cd SHINE
 ```
-conda activate metalora
-```
-Including 
-```
+
+### Environment
+Create the conda env using the following commands
+```bash
 conda create -n metalora python==3.12 -y
 conda activate metalora
-# pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121 change based on your cuda version
+# Change the pytorch version based on your device
 pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
 pip install huggingface modelscope transformers datasets scikit-learn hydra-core tensorboard openai rouge seaborn matplotlib
 ```
 
-Download Model
-```
+### Models
+Backbone LLM can be download directly from modelscope
+```bash
 modelscope download --model Qwen/Qwen3-8B --local_dir models/Qwen3-8B
 ```
 
-Download dataset
+Download hypernetwork checkpoint
+```bash
+# Release soon
 ```
-export HF_ENDPOINT=https://hf-mirror.com
+
+### Datasets
+Download the pretraining dataset
+```bash
 hf download fxmeng/transmla_pretrain_6B_tokens --repo-type dataset --local-dir data/transmla_pretrain_6B_tokens
-hf download bigai-nlco/LooGLE --repo-type dataset --local-dir data/loogle
-hf download rajpurkar/squad --repo-type dataset --local-dir data/squad
-hf download ArmelR/the-pile-splitted --repo-type dataset --local-dir data/Pile
 ```
+
+Download instruction finetuning dataset from
+```bash
+#Release soon
+```
+
+if can't connect to huggingface, try using the mirror
+```bash
+export HF_ENDPOINT=https://hf-mirror.com
+```
+
+
+<!-- ## 📖 Citation
+
+# If you find this work useful, please cite our paper:
+
+# ```bibtex
+# @inproceedings{
+# chen2025generative,
+# title={Generative Adapter: Contextualizing Language Models in Parameters with A Single Forward Pass},
+# author={Tong Chen and Hao Fang and Patrick Xia and Xiaodong Liu and Benjamin Van Durme and Luke Zettlemoyer and Jianfeng Gao and Hao Cheng},
+# booktitle={The Thirteenth International Conference on Learning Representations},
+# year={2025},
+# url={https://openreview.net/forum?id=bc3sUsS6ck}
+# }
+# ``` -->
