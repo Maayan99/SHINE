@@ -1,5 +1,20 @@
 # 🔆 SHINE: A Scalable In-Context Hypernetwork for Mapping Context to LoRA in a Single Pass
 
+<div align="center">
+
+An example
+[example](figures/example.pdf)
+
+Overall Architecture
+[overall architecture](figures/overall_architecture.pdf)
+
+Hypernetwork Architecture
+[hypernetwork architecture](figures/hypernetwork_architecture.pdf)
+
+
+</div>
+
+
 <!-- <div align="center">
 
 这里放置徽章，例如 arXiv 链接、许可证、Python 版本等
@@ -80,7 +95,7 @@ export HF_ENDPOINT=https://hf-mirror.com
 
 
 
-## ⚙️ Train
+## ⚙️ Training
 
 Pretrain
 ```bash
