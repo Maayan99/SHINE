@@ -4,7 +4,7 @@
 
 ---
 
-<img src="figures/example.png" alt="example" width="1000" />
+<img src="figures/example.png" alt="example" width="800" />
 
 ---
 
@@ -12,7 +12,7 @@
 
 ---
 
-<img src="figures/hypernetwork_architecture.png" alt="example" width="600" />
+<img src="figures/hypernetwork_architecture.png" alt="example" width="500" />
 
 
 </div>
