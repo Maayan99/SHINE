@@ -3,12 +3,15 @@
 <div align="center">
 
 An example
-![example](figures/example.pdf)
+
+<embed src="figures/example.pdf" width="500" height="375" type="application/pdf">
 
 Overall Architecture
+
 ![overall architecture](figures/overall_architecture.pdf)
 
 Hypernetwork Architecture
+
 ![hypernetwork architecture](figures/hypernetwork_architecture.pdf)
 
 
