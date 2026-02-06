@@ -1,22 +1,24 @@
+<div align="center">
 # 🔆 SHINE: A Scalable In-Context Hypernetwork for Mapping Context to LoRA in a Single Pass
 
-<div align="center">
+---
 
 An example
 
-<embed src="figures/example.pdf" width="500" height="375" type="application/pdf">
-
+![example](figures/example.png)
+---
 Overall Architecture
 
-![overall architecture](figures/overall_architecture.pdf)
-
+![overall architecture](figures/overall_architecture.png)
+---
 Hypernetwork Architecture
 
-![hypernetwork architecture](figures/hypernetwork_architecture.pdf)
+![hypernetwork architecture](figures/hypernetwork_architecture.png)
 
 
 </div>
 
+---
 
 <!-- <div align="center">
 
@@ -94,9 +96,11 @@ If can't connect to huggingface, try using the mirror
 export HF_ENDPOINT=https://hf-mirror.com
 ```
 
+---
+
 ## 🚀 Inference 
 
-
+---
 
 ## ⚙️ Training
 
