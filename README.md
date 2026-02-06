@@ -3,13 +3,13 @@
 <div align="center">
 
 An example
-[example](figures/example.pdf)
+![example](figures/example.pdf)
 
 Overall Architecture
-[overall architecture](figures/overall_architecture.pdf)
+![overall architecture](figures/overall_architecture.pdf)
 
 Hypernetwork Architecture
-[hypernetwork architecture](figures/hypernetwork_architecture.pdf)
+![hypernetwork architecture](figures/hypernetwork_architecture.pdf)
 
 
 </div>
