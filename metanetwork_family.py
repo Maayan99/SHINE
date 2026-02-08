@@ -126,7 +126,7 @@ class Metanetwork(nn.Module):
         self.metamodel = metamodel
         self.idx_range, end = self.metamodel.divide_idx(self.lora_r, 0)
         self.idx_range.append(end)
-        self.adapter_reg = cfg.optim.adapter_reg
+        self.adapter_reg = cfg.optim.adapter_reg if hasattr(cfg, 'optim') else 0.0
         self.method = cfg.metanetwork.method
         self.metamodel.set_generate_func(self.method)
         

@@ -541,10 +541,11 @@ class SFTDataset(Dataset):
 @dataclass
 class BaseCollator:
     def __post_init__(self):
+        if "pretrain" in self.cfg:
+            self.completion_freq = self.cfg.pretrain.completion_freq
+            self.max_completion_ratio = self.cfg.pretrain.max_completion_ratio
+            self.min_completion_ratio = self.cfg.pretrain.min_completion_ratio
         self.thinkend_token_id = self.tokenizer.convert_tokens_to_ids("</think>")
-        self.completion_freq = self.cfg.pretrain.completion_freq
-        self.max_completion_ratio = self.cfg.pretrain.max_completion_ratio
-        self.min_completion_ratio = self.cfg.pretrain.min_completion_ratio
         self.eot = '<|endoftext|>'
         self.assistant_token_id = self.tokenizer.convert_tokens_to_ids("assistant")
         self.imstart_token_id = self.tokenizer.convert_tokens_to_ids("<|im_start|>")

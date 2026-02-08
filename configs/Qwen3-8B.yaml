@@ -9,7 +9,7 @@ run:
   use_amp: false           # set false to disable AMP (can't be used now, bugs)
   gradient_accumulation_steps: 4
   device: cuda                # auto | cuda | cpu
-  use_gradient_checkpoint: true
+  use_gradient_checkpoint: false
   
 paths:
   model_path: "./models/Qwen3-8B"
