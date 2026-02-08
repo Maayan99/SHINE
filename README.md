@@ -174,10 +174,7 @@ Turn 2
 Conversation 3
 
 **Context:**  
-If the light is on, somebody must be at home.  
-If the light is off, often nobody is at home.  
-This holds true only during the day.  
-At night people are sleeping so there will always be no lights.
+If the light is on, somebody must be at home. If the light is off, often nobody is at home. But this holds true only during the day. In the night people are all sleeping so there will always be no lights.
 
 Turn 1  
 **Question:** What does it mean if the light is on?
@@ -205,8 +202,7 @@ Turn 3
 Conversation 4
 
 **Context:**  
-Whoever organizes cheating in a national examination shall be sentenced to imprisonment (up to 3 years) or detention and fined.  
-If circumstances are serious, imprisonment ranges from 3 to 7 years plus fines.
+Whoever organizes cheating in a national examination prescribed by law shall be sentenced to fixed-term imprisonment of not more than three years or criminal detention and shall also be fined, or shall be fined only; if the circumstances are serious, he shall be sentenced to fixed-term imprisonment of not less than three years but not more than seven years and shall also be fined.
 
 Turn 1  
 **Question:** What will happen if one organize cheating?
@@ -227,7 +223,7 @@ Turn 2
 Conversation 5
 
 **Context:**  
-“Fair enough” can mean either genuine agreement or a polite way to end disagreement and move on.
+When someone says \"fair enough\", it can mean two slightly different things, and you usually understand which one it is from the tone and the moment. Sometimes it means real agreement — the person has heard your reason, it makes sense to them, and they are genuinely okay with it. Other times, it does not mean they agree at all. It is more like a polite way of saying, \"I do not think the same, but I am done arguing.\" In that case, fair enough is about keeping the conversation calm and moving on, not about changing their mind.
 
 Turn 1  
 **Question:** What does "fair enough" mean?
