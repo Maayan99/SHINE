@@ -127,8 +127,7 @@ After downloading the backbone LLM and hypernetwork checkpoint, run [inference.i
 
 ---
 
-Follows are some examples, **In-Context** means input context and prompt and questions. **Only Question** means input prompt and questions, no context.
-
+Follows are some examples, **In-Context** means input context and prompt and questions. **Only Question** means input prompt and questions, no context. **SHINE** is our method that uses a hypernetwork to convert context to LoRA, at inference time input only questions, no prompt or context. All contextual knowledge is encoded into the LoRA parameters.
 ---
 
 Conversation 1
