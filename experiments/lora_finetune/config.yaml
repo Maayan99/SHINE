@@ -10,7 +10,7 @@ checkpoint_stage: "train"      # "pretrain" | "train" (ift)
 
 run:
   seed: 42
-  device: cuda
+  device: mps  # change to cuda when running on a GPU server
 
 pretrain:
   completion_freq: 0.5
@@ -18,8 +18,8 @@ pretrain:
   min_completion_ratio: 0.1
 
 model:
-  lora_r: 4
-  metalora_r: 4
+  lora_r: 8
+  metalora_r: 128
   ift_additional_metalora_r: -1
   num_mem_token: ${num_mem_token}
   metamodel_class_path: "LoraQwen.LoraQwen3ForCausalLM"

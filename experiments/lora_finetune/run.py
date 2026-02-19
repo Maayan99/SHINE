@@ -13,15 +13,10 @@ For each test sample we:
   6. Repeat steps 2-5 from a zero-init LoRA baseline
 
 Usage (run from SHINE/SHINE/):
-    python experiments/lora_finetune/run.py \
-        --config-path experiments/lora_finetune \
-        --config-name config \
-        lora_finetune.num_samples=5
+    python experiments/lora_finetune/run.py lora_finetune.num_samples=5
 
     # Override checkpoint stage:
     python experiments/lora_finetune/run.py \
-        --config-path experiments/lora_finetune \
-        --config-name config \
         checkpoint_stage=train \
         test_global_step=epoch-2
 """
@@ -45,7 +40,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk
 from omegaconf import DictConfig, OmegaConf
 import hydra
 from transformers import AutoTokenizer
@@ -149,7 +144,11 @@ def load_test_data(cfg, tokenizer, num_samples: int):
 
     if source == "squad":
         f1_metric = compute_f1
-        data = load_dataset(os.path.join("data", "squad"), split="validation")
+        squad_path = os.path.join("data", "squad")
+        if os.path.isfile(os.path.join(squad_path, "dataset_dict.json")):
+            data = load_from_disk(squad_path)["validation"]
+        else:
+            data = load_dataset(squad_path, split="validation")
         data = data.shuffle(seed=seed)
         subset = data.select(range(min(N, len(data))))
         ds = GroupedSquadDataset(subset, tokenizer, cfg.test.context_avg_len)
@@ -264,7 +263,11 @@ def main(cfg: DictConfig):
 
     # ── seed + device ─────────────────────────────────────────────────────────
     set_seed(int(cfg.run.seed))
-    device = _resolve_device(cfg.run.device)
+    if cfg.run.device == "mps":
+        device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+        logger.info(f"MPS requested; using device={device}")
+    else:
+        device = _resolve_device(cfg.run.device)
     logger.info(f"device={device}  seed={cfg.run.seed}")
 
     # ── load model + tokenizer ────────────────────────────────────────────────
@@ -435,11 +438,14 @@ def main(cfg: DictConfig):
         )
 
         # ── unpack batch (bs=1) ───────────────────────────────────────────────
+        # GroupedSquadDataset may return multiple QA pairs per context group.
+        # We always work with exactly the first example to keep batch dim=1
+        # throughout (generate_lora_dict, finetune, and evaluate all expect [1, *]).
         evidence_text         = batch["evidence"][0]          # raw string
-        evidence_ids          = batch["evidence_ids"].to(device)
-        evidence_mask         = batch["evidence_attention_mask"].to(device)
-        input_ids             = batch["input_ids"].to(device)
-        input_mask            = batch["input_attention_mask"].to(device)
+        evidence_ids          = batch["evidence_ids"][0:1].to(device)
+        evidence_mask         = batch["evidence_attention_mask"][0:1].to(device)
+        input_ids             = batch["input_ids"][0:1].to(device)
+        input_mask            = batch["input_attention_mask"][0:1].to(device)
         ground_truth          = batch["full_answers"][0]
         question              = batch["questions"][0]
 
