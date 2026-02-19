@@ -105,17 +105,10 @@ def evaluate_lora(
         do_sample=False,
     )
 
-    input_len = input_mask.sum(dim=1).item()
-    gen_tokens = gen_out[0].tolist()
-
-    full_text = tokenizer.decode(gen_out[0], skip_special_tokens=True)
-    input_text = tokenizer.decode(input_ids[0, :input_len], skip_special_tokens=True)
-
-    # strip the echoed prompt if present
-    if full_text.startswith(input_text):
-        answer_text = full_text[len(input_text):]
-    else:
-        answer_text = full_text
+    # Decode only the newly generated tokens (everything after the input)
+    new_tokens = gen_out[0, input_ids.shape[1]:]
+    answer_text = tokenizer.decode(new_tokens, skip_special_tokens=True)
+    full_text = answer_text  # for logging
 
     _, answer = extract_think_and_answer(answer_text)
     f1 = compute_sample_f1(ground_truth, answer, f1_metric)

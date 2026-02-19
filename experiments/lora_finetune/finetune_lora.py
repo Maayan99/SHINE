@@ -53,24 +53,51 @@ def clone_loradict_to_params(loradict: Any) -> Any:
     return loradict
 
 
-def zero_init_loradict(loradict: Any) -> Any:
+def random_init_loradict(loradict: Any, scale: float = 0.001) -> Any:
     """
-    Return a same-structure loradict with every tensor initialised to zeros
-    (and requires_grad=True).  Used as the "random-init baseline".
+    Return a same-structure loradict with standard LoRA initialisation:
+      A matrices  → N(0, sqrt(scale))   (non-zero so gradients can flow)
+      B matrices  → zeros
+      C tensors   → zeros
 
-    The original SHINE code initialises B and C to zero, A to N(0, sqrt(scale)).
-    For a pure zero-init baseline we zero everything so step=0 corresponds to
-    "no LoRA at all".
+    This is the correct "scratch" baseline: identical initialisation to what
+    the model uses before any SHINE/training, and avoids the dead-gradient
+    problem of all-zeros init (when A=B=0, grad_A ∝ B = 0 and vice versa).
+
+    The dict structure is walked recursively; leaf dicts with key "A"/"B"/"C"
+    are detected and handled per-key.
     """
     if loradict is None:
         return None
     if isinstance(loradict, dict):
-        return {k: zero_init_loradict(v) for k, v in loradict.items()}
+        # Leaf-level LoRA dict: contains "A", "B", (optionally "C") as keys
+        if "A" in loradict or "B" in loradict:
+            result = {}
+            for k, v in loradict.items():
+                if v is None:
+                    result[k] = None
+                elif torch.is_tensor(v):
+                    if k == "A":
+                        t = torch.randn_like(v).detach() * (scale ** 0.5)
+                    else:  # "B" or "C"
+                        t = torch.zeros_like(v).detach()
+                    t.requires_grad_(True)
+                    result[k] = t
+                else:
+                    result[k] = v
+            return result
+        # Non-leaf dict: recurse
+        return {k: random_init_loradict(v, scale) for k, v in loradict.items()}
     if torch.is_tensor(loradict):
+        # Bare tensor not inside an A/B/C dict — zero it
         t = torch.zeros_like(loradict).detach()
         t.requires_grad_(True)
         return t
     return loradict
+
+
+# Keep old name as alias so nothing else breaks
+zero_init_loradict = random_init_loradict
 
 
 def _count_loradict_params(loradict: Any) -> int:
