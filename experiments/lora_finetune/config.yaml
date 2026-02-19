@@ -72,7 +72,7 @@ test:
   context_avg_len: 512
   context_max_length: 1300
   conversation_max_length: 128
-  max_new_tokens: 128
+  max_new_tokens: 512
   save_path: "experiments/lora_finetune/results/${name}"
   batch_size: 1             # must stay 1 for per-sample fine-tuning
   num_workers: 2

@@ -112,6 +112,18 @@ def evaluate_lora(
     full_text = answer_text
 
     _, answer = extract_think_and_answer(answer_text)
+
+    # Detect truncated thinking: if no </think> was found, the model hit max_new_tokens
+    # mid-think and extract_think_and_answer returned the raw "<think>..." text.
+    # In this case return empty string so F1=0 (accurate signal, not misleading garbage).
+    if answer.lower().startswith("<think>"):
+        logger.warning(
+            f"[sample {sample_id}][{condition}] step={step}: "
+            f"Thinking was truncated (no </think> found). "
+            f"Returning empty answer (F1=0). Consider increasing max_new_tokens."
+        )
+        answer = ""
+
     f1 = compute_sample_f1(ground_truth, answer, f1_metric)
 
     logger.info(
