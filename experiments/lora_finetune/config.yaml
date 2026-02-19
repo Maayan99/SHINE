@@ -1,0 +1,104 @@
+# Config for the LoRA fine-tuning experiment.
+# Self-contained: no Hydra defaults inheritance (avoids path issues when run from experiments/).
+# All settings mirror Qwen3-8B.yaml; add `lora_finetune` section at the bottom.
+
+name: 8gpu_8lora_128metalora_lr5e-5_grouppretrain_1150   # checkpoint name to load from
+
+# Which checkpoint stage to load
+test_global_step: "epoch-1"   # pretrain checkpoint  (use "epoch-2" for IFT)
+checkpoint_stage: "train"      # "pretrain" | "train" (ift)
+
+run:
+  seed: 42
+  device: cuda
+
+pretrain:
+  completion_freq: 0.5
+  max_completion_ratio: 0.3
+  min_completion_ratio: 0.1
+
+model:
+  lora_r: 4
+  metalora_r: 4
+  ift_additional_metalora_r: -1
+  num_mem_token: ${num_mem_token}
+  metamodel_class_path: "LoraQwen.LoraQwen3ForCausalLM"
+  config_class_path: "LoraQwen.Qwen3Config"
+  tokenizer_from: "./models/Qwen3-8B"
+  model_from: "./models/Qwen3-8B"
+
+metanetwork:
+  type: "transformer"
+  method: "rl"
+  transformer_cfg:
+    encoder_cfg:
+      d_model: 4096
+      nhead: 32
+      dim_feedforward: 8192
+      dropout: 0
+      activation: gelu
+      layer_norm_eps: 0.00001
+      batch_first: True
+      norm_first: False
+      bias: True
+    couple_encoder_cfg:
+      d_model: 4096
+      nhead: 32
+      dim_feedforward: 8192
+      dropout: 0
+      activation: gelu
+      layer_norm_eps: 0.00001
+      batch_first: True
+      norm_first: False
+      bias: True
+    layer_transformer_first: True
+    mean_pool_size: 1
+    num_layers: 4
+    couple_num_layers: 0
+    scale: 0.001
+  linear_cfg:
+    num_layers: 4
+    linear_hidden_dim: 8192
+    scale: 0.001
+    bias: false
+  linear_gate_cfg:
+    num_layers: 4
+    linear_hidden_dim: 8192
+    scale: 0.001
+    bias: false
+
+test:
+  source: squad             # dataset to evaluate on: squad | hotpotqa | musique | 2wikimultihopqa
+  context_avg_len: 512
+  context_max_length: 1300
+  conversation_max_length: 128
+  max_new_tokens: 128
+  save_path: "experiments/lora_finetune/results/${name}"
+  batch_size: 1             # must stay 1 for per-sample fine-tuning
+  num_workers: 2
+
+optim:
+  adapter_reg: 0.0
+
+# ─────────────────────────────────────────────────────────────────────────────
+# New section: controls the fine-tuning experiment
+# ─────────────────────────────────────────────────────────────────────────────
+lora_finetune:
+  lr: 0.001                          # Adam lr for LoRA tensor optimization
+  eval_at: [0, 1, 5, 10, 25, 50, 100]   # gradient steps at which to snapshot + evaluate
+  num_samples: 200                   # how many test samples to run; -1 = full split
+  recon_mode: "recon"                # "recon" (full evidence) | "comp" (first-half → full)
+  recon_context_max_length: 1300     # max tokens for the RECON evidence sequence
+  recon_conversation_max_length: 1300 # max tokens for the full RECON label sequence
+  out_dir: "experiments/lora_finetune/results/${name}/${test.source}"
+
+hidden_size: -1
+num_layers: -1
+num_mem_token: 4
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: "experiments/lora_finetune/runs/${name}/${now:%Y-%m-%d_%H-%M-%S}"
+  output_subdir: null
