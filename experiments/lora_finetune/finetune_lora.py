@@ -6,16 +6,20 @@ Helpers for test-time LoRA fine-tuning experiment.
 Key functions:
   clone_loradict_to_params  – deep-clone a (possibly non-leaf) loradict into
                               independent leaf tensors that can be optimized.
-  zero_init_loradict        – same structure, all tensors zeroed.
+  random_init_loradict      – same structure, A∼N(0,√scale), B=zeros (standard
+                              LoRA "scratch" init; avoids dead-gradient of all-zeros).
+  zero_init_loradict        – alias for random_init_loradict (kept for backwards compat).
   build_recon_inputs        – build RECON-prompt input_ids / labels from raw text.
-  finetune_lora_on_evidence – run K Adam steps on the RECON LM loss, returning
-                              loradict snapshots at requested step counts.
+  finetune_lora_on_evidence – run K Adam steps on the RECON LM loss; calls an optional
+                              on_snapshot(step, loradict) callback at each eval step so
+                              callers can evaluate+discard immediately without accumulating
+                              all snapshots in memory.
 """
 
 import sys
 import os
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -175,6 +179,18 @@ def build_recon_inputs(
         if ids[j].item() == imend_token_id:
             last_imend = j
         elif ids[j].item() == assistant_token_id and ids[j - 1].item() == imstart_token_id:
+            # Sanity-check: position j+1 must be exactly one \n token.
+            # If it isn't, the +2 offset is wrong for this tokenizer/template and
+            # we'd silently supervise the wrong tokens.
+            nl_ids = tokenizer.encode('\n', add_special_tokens=False)
+            assert (
+                len(nl_ids) == 1 and ids[j + 1].item() == nl_ids[0]
+            ), (
+                f"Expected a single '\\n' token (id={nl_ids}) at position j+1={j+1} "
+                f"immediately after the 'assistant' token, but got token_id="
+                f"{ids[j+1].item()}. The +2 offset in label masking is wrong for "
+                f"this tokenizer/template version."
+            )
             # j+2 skips "<|im_start|>assistant\n", last_imend+2 includes the <|im_end|>
             mask[0, j + 2 : last_imend + 2] = 1
             break  # only the last assistant turn
@@ -208,7 +224,8 @@ def finetune_lora_on_evidence(
     eval_at: List[int],
     sample_id: int,
     condition_name: str = "shine",
-) -> Dict[int, dict]:
+    on_snapshot: Optional[Callable[[int, dict], None]] = None,
+) -> Optional[Dict[int, dict]]:
     """
     Optimise `lora_params` in-place using the RECON LM loss for up to
     max(eval_at) gradient steps.
@@ -222,10 +239,15 @@ def finetune_lora_on_evidence(
         lr             : Adam learning rate.
         eval_at        : sorted list of step counts to snapshot.
         sample_id      : used only for log messages.
-        condition_name : "shine" or "zero" — for log messages.
+        condition_name : label for log messages (e.g. "shine" or "scratch").
+        on_snapshot    : optional callable(step, loradict_clone).  When provided,
+                         called immediately at each eval step with a fresh clone of
+                         lora_params so callers can evaluate+discard without keeping
+                         all snapshots in memory simultaneously.  When None (default),
+                         snapshots are accumulated in a dict that is returned.
 
     Returns:
-        Dict[step -> cloned loradict snapshot]
+        Dict[step -> cloned loradict snapshot] when on_snapshot is None, else None.
     """
     assert eval_at == sorted(eval_at), "eval_at must be sorted"
 
@@ -241,9 +263,16 @@ def finetune_lora_on_evidence(
 
     snapshots: Dict[int, dict] = {}
 
-    # Step-0 snapshot: before any gradient update (= pure SHINE output or zero init)
+    def _handle_snapshot(step: int) -> None:
+        snap = clone_loradict_to_params(lora_params)
+        if on_snapshot is not None:
+            on_snapshot(step, snap)   # evaluate immediately; snap freed after call
+        else:
+            snapshots[step] = snap    # legacy: accumulate and return
+
+    # Step-0 snapshot: before any gradient update (= pure SHINE output or scratch init)
     if 0 in eval_at:
-        snapshots[0] = clone_loradict_to_params(lora_params)
+        _handle_snapshot(0)
         logger.info(f"[sample {sample_id}][{condition_name}] step=0 snapshot saved (no grad yet)")
 
     model.eval()  # safety: ensure model is in eval mode
@@ -267,22 +296,26 @@ def finetune_lora_on_evidence(
             )
 
         loss.backward()
+        # Clip gradients to prevent a single bad sample from destroying the LoRA weights
+        grad_norm = torch.nn.utils.clip_grad_norm_(flat_params, max_norm=1.0)
         optimizer.step()
 
         logger.info(
             f"[sample {sample_id}][{condition_name}] "
-            f"step={step}/{max(eval_at)}: recon_loss={loss.item():.6f}"
+            f"step={step}/{max(eval_at)}: recon_loss={loss.item():.6f}  "
+            f"grad_norm={grad_norm:.4f}"
         )
 
         if step in eval_at:
-            snapshots[step] = clone_loradict_to_params(lora_params)
+            _handle_snapshot(step)
             logger.info(
                 f"[sample {sample_id}][{condition_name}] "
                 f"step={step}: snapshot saved"
             )
 
+    completed_steps = sorted(snapshots.keys()) if on_snapshot is None else eval_at
     logger.info(
         f"[sample {sample_id}][{condition_name}] Fine-tuning complete. "
-        f"Snapshots at steps: {sorted(snapshots.keys())}"
+        f"Snapshots at steps: {completed_steps}"
     )
-    return snapshots
+    return snapshots if on_snapshot is None else None

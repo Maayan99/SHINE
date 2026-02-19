@@ -10,7 +10,7 @@ For each test sample we:
      (reconstruct the evidence text – same objective as SHINE pretraining)
   4. Snapshot the LoRA at each step in `lora_finetune.eval_at`
   5. Run QA generation + F1 evaluation at each snapshot
-  6. Repeat steps 2-5 from a zero-init LoRA baseline
+  6. Repeat steps 2-5 from a scratch-init LoRA baseline (A∼N(0,√scale), B=0)
 
 Usage (run from SHINE/SHINE/):
     python experiments/lora_finetune/run.py lora_finetune.num_samples=5
@@ -224,16 +224,16 @@ def load_test_data(cfg, tokenizer, num_samples: int):
 def aggregate_results(records: List[dict], eval_at: List[int]) -> dict:
     """
     Given a list of per-sample records (each with "shine"/{step: {f1}} and
-    "zero"/{step: {f1}}), compute per-step average F1 and std.
+    "scratch"/{step: {f1}}), compute per-step average F1 and std.
     """
     agg = {
-        "eval_at_steps": eval_at,
-        "shine_finetune": {},
-        "zero_finetune":  {},
+        "eval_at_steps":   eval_at,
+        "shine_finetune":  {},
+        "scratch_finetune": {},
         "num_samples": len(records),
     }
 
-    for condition in ("shine", "zero"):
+    for condition in ("shine", "scratch"):
         for step in eval_at:
             step_str = str(step)
             f1_vals = []
@@ -501,32 +501,20 @@ def main(cfg: DictConfig):
             "ground_truth":  ground_truth,
             "evidence":      evidence_text[:200] + "..." if len(evidence_text) > 200 else evidence_text,
             "shine":         {},
-            "zero":          {},
+            "scratch":       {},
         }
 
         # ── condition 1: fine-tune from SHINE warm start ──────────────────────
         logger.info(f"[sample {sample_idx}] === Condition: SHINE warm start ===")
         shine_params = clone_loradict_to_params(shine_lora)
-        shine_snapshots = finetune_lora_on_evidence(
-            model=metamodel,
-            lora_params=shine_params,
-            recon_input_ids=recon_input_ids,
-            recon_labels=recon_labels,
-            recon_mask=recon_mask,
-            lr=lr,
-            eval_at=eval_at,
-            sample_id=sample_idx,
-            condition_name="shine",
-        )
 
-        logger.info(f"[sample {sample_idx}] Evaluating SHINE snapshots ({len(shine_snapshots)} steps)...")
-        for step in sorted(shine_snapshots.keys()):
+        def on_shine_snapshot(step: int, lora: dict) -> None:
             _, answer, f1 = evaluate_lora(
                 model=metamodel,
                 tokenizer=tokenizer,
                 input_ids=input_ids,
                 input_mask=input_mask,
-                loradict=shine_snapshots[step],
+                loradict=lora,
                 max_new_tokens=max_new_tokens,
                 ground_truth=ground_truth,
                 f1_metric=f1_metric,
@@ -537,38 +525,52 @@ def main(cfg: DictConfig):
             )
             record["shine"][str(step)] = {"answer": answer, "f1": f1}
 
-        # ── condition 2: fine-tune from zero init ─────────────────────────────
-        logger.info(f"[sample {sample_idx}] === Condition: zero-init LoRA ===")
-        zero_params = zero_init_loradict(shine_lora)
-        zero_snapshots = finetune_lora_on_evidence(
+        finetune_lora_on_evidence(
             model=metamodel,
-            lora_params=zero_params,
+            lora_params=shine_params,
             recon_input_ids=recon_input_ids,
             recon_labels=recon_labels,
             recon_mask=recon_mask,
             lr=lr,
             eval_at=eval_at,
             sample_id=sample_idx,
-            condition_name="zero",
+            condition_name="shine",
+            on_snapshot=on_shine_snapshot,
         )
 
-        logger.info(f"[sample {sample_idx}] Evaluating zero-init snapshots ({len(zero_snapshots)} steps)...")
-        for step in sorted(zero_snapshots.keys()):
+        # ── condition 2: fine-tune from scratch (random A, zero B) ───────────
+        logger.info(f"[sample {sample_idx}] === Condition: scratch-init LoRA ===")
+        scratch_params = zero_init_loradict(shine_lora)
+
+        def on_scratch_snapshot(step: int, lora: dict) -> None:
             _, answer, f1 = evaluate_lora(
                 model=metamodel,
                 tokenizer=tokenizer,
                 input_ids=input_ids,
                 input_mask=input_mask,
-                loradict=zero_snapshots[step],
+                loradict=lora,
                 max_new_tokens=max_new_tokens,
                 ground_truth=ground_truth,
                 f1_metric=f1_metric,
                 sample_id=sample_idx,
                 step=step,
-                condition="zero",
+                condition="scratch",
                 question=question,
             )
-            record["zero"][str(step)] = {"answer": answer, "f1": f1}
+            record["scratch"][str(step)] = {"answer": answer, "f1": f1}
+
+        finetune_lora_on_evidence(
+            model=metamodel,
+            lora_params=scratch_params,
+            recon_input_ids=recon_input_ids,
+            recon_labels=recon_labels,
+            recon_mask=recon_mask,
+            lr=lr,
+            eval_at=eval_at,
+            sample_id=sample_idx,
+            condition_name="scratch",
+            on_snapshot=on_scratch_snapshot,
+        )
 
         # ── stream to JSONL ───────────────────────────────────────────────────
         jsonl_f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -577,12 +579,12 @@ def main(cfg: DictConfig):
         samples_processed += 1
 
         # ── quick per-sample summary to console ──────────────────────────────
-        shine_f1_by_step = {s: record["shine"].get(str(s), {}).get("f1", float("nan")) for s in eval_at}
-        zero_f1_by_step  = {s: record["zero"].get(str(s), {}).get("f1", float("nan")) for s in eval_at}
+        shine_f1_by_step   = {s: record["shine"].get(str(s), {}).get("f1", float("nan")) for s in eval_at}
+        scratch_f1_by_step = {s: record["scratch"].get(str(s), {}).get("f1", float("nan")) for s in eval_at}
         logger.info(
             f"[sample {sample_idx}] SUMMARY:\n"
             f"  SHINE warm-start F1 by step: {shine_f1_by_step}\n"
-            f"  Zero-init       F1 by step:  {zero_f1_by_step}"
+            f"  Scratch-init     F1 by step: {scratch_f1_by_step}"
         )
 
         elapsed = time.time() - t_start
@@ -611,15 +613,15 @@ def main(cfg: DictConfig):
     logger.info("\n" + "=" * 60)
     logger.info("FINAL RESULTS")
     logger.info("=" * 60)
-    header = f"{'Step':>6}  {'SHINE F1':>10}  {'Zero F1':>10}"
+    header = f"{'Step':>6}  {'SHINE F1':>10}  {'Scratch F1':>12}"
     logger.info(header)
     logger.info("-" * len(header))
     for step in eval_at:
         s_info = summary["shine_finetune"].get(str(step), {})
-        z_info = summary["zero_finetune"].get(str(step), {})
+        z_info = summary["scratch_finetune"].get(str(step), {})
         s_f1 = s_info.get("avg_f1", float("nan"))
         z_f1 = z_info.get("avg_f1", float("nan"))
-        logger.info(f"{step:>6}  {s_f1:>10.4f}  {z_f1:>10.4f}")
+        logger.info(f"{step:>6}  {s_f1:>10.4f}  {z_f1:>12.4f}")
     logger.info("=" * 60)
 
 
