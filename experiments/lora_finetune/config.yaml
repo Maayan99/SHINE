@@ -10,7 +10,7 @@ checkpoint_stage: "train"      # "pretrain" | "train" (ift)
 
 run:
   seed: 42
-  device: mps  # change to cuda when running on a GPU server
+  device: cuda  # use mps for local Mac development
 
 pretrain:
   completion_freq: 0.5
