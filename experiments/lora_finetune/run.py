@@ -89,6 +89,7 @@ def evaluate_lora(
     sample_id: int,
     step: int,
     condition: str,
+    question: str = "",
 ) -> Tuple[str, str, float]:
     """
     Run generation with the given loradict, extract the answer, compute F1.
@@ -108,14 +109,17 @@ def evaluate_lora(
     # Decode only the newly generated tokens (everything after the input)
     new_tokens = gen_out[0, input_ids.shape[1]:]
     answer_text = tokenizer.decode(new_tokens, skip_special_tokens=True)
-    full_text = answer_text  # for logging
+    full_text = answer_text
 
     _, answer = extract_think_and_answer(answer_text)
     f1 = compute_sample_f1(ground_truth, answer, f1_metric)
 
     logger.info(
-        f"[sample {sample_id}][{condition}] step={step}: "
-        f"f1={f1:.4f}  answer='{answer[:80]}'"
+        f"[sample {sample_id}][{condition}] step={step}: f1={f1:.4f}\n"
+        f"  question   : {question}\n"
+        f"  ground truth: {ground_truth}\n"
+        f"  raw output : {answer_text.strip()[:300]}\n"
+        f"  answer     : {answer}"
     )
     return full_text, answer, f1
 
@@ -517,6 +521,7 @@ def main(cfg: DictConfig):
                 sample_id=sample_idx,
                 step=step,
                 condition="shine",
+                question=question,
             )
             record["shine"][str(step)] = {"answer": answer, "f1": f1}
 
@@ -549,6 +554,7 @@ def main(cfg: DictConfig):
                 sample_id=sample_idx,
                 step=step,
                 condition="zero",
+                question=question,
             )
             record["zero"][str(step)] = {"answer": answer, "f1": f1}
 
