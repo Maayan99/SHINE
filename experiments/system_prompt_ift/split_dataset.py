@@ -8,7 +8,9 @@ IFTC1QADataset: JSON array of items with {context, conversations, contextlen,
 conversationlen}.
 
 Input:  data/system_prompt_dataset.jsonl   (from Step 1.3)
-Output: data/train.json, data/val.json, data/test.json
+Output:
+  Grouped JSON (IFTC1QADataset format): data/train.json, data/val.json, data/test.json
+  Flat JSONL (SystemPromptIFTDataset format): {shine_root}/data/system_prompts/train.jsonl, val.jsonl, test.jsonl
 
 Usage:
   python split_dataset.py
@@ -134,6 +136,24 @@ def main():
         for p in test_pairs:
             f.write(json.dumps(p, ensure_ascii=False) + "\n")
     print(f"\n  Test pairs (flat): {len(test_pairs)} → {test_pairs_path}")
+
+    # Write flat JSONL splits for SystemPromptIFTDataset (one pair per line)
+    # Path is relative to SHINE root (where meta_train_parallel.py runs from)
+    shine_root = os.path.join(os.path.dirname(__file__), "..", "..")
+    flat_dir = os.path.join(shine_root, "data", "system_prompts")
+    os.makedirs(flat_dir, exist_ok=True)
+
+    split_to_ids = {"train": train_ids, "val": val_ids, "test": test_ids}
+    print("\nFlat JSONL output (for SystemPromptIFTDataset):")
+    for split_name, id_set in split_to_ids.items():
+        split_pairs = []
+        for sid in sorted(id_set):
+            split_pairs.extend(by_prompt[sid])
+        out_path = os.path.join(flat_dir, f"{split_name}.jsonl")
+        with open(out_path, "w") as f:
+            for p in split_pairs:
+                f.write(json.dumps(p, ensure_ascii=False) + "\n")
+        print(f"  {split_name}: {len(split_pairs)} pairs → {out_path}")
 
     print("\nDone.")
 

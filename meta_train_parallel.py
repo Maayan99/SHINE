@@ -45,6 +45,7 @@ from torch.utils.tensorboard import SummaryWriter
 from metanetwork_family import Metanetwork
 
 from utils.mydataset import TextDataset, create_mock_dataset, SquadDataset, SquadCollator, PretrainCollator, GroupedSquadDataset, GroupTextDataset, GroupPretrainCollator, IFTCollator, IFTDataset, IFTC1QADataset
+from experiments.system_prompt_ift.system_prompt_dataset import SystemPromptIFTDataset
 from utils.myseed import set_seed
 from utils.mylogging import get_logger
 from utils.mysaveload import (
@@ -676,6 +677,13 @@ def main(cfg: DictConfig):
         val_ds = GroupedSquadDataset(val_dataset, tokenizer, 512, name="Validation", sep="\n\n")
         train_collator = IFTCollator(tokenizer, cfg.data.context_max_length, cfg.data.conversation_max_length, cfg=cfg)
         val_collator = SquadCollator(tokenizer=tokenizer, conversation_max_length=cfg.data.conversation_max_length, context_max_length=cfg.data.context_max_length, metatrain=True, cfg=cfg)
+    elif cfg.data.source == "system-prompt-ift":
+        data_path = os.path.join("data", "system_prompts", "train.jsonl")
+        train_ds = SystemPromptIFTDataset(data_path, use_exceed=False, max_context_len=cfg.data.context_max_length, max_conversation_len=cfg.data.conversation_max_length)
+        val_data_path = os.path.join("data", "system_prompts", "val.jsonl")
+        val_ds = SystemPromptIFTDataset(val_data_path, use_exceed=True, max_context_len=cfg.data.context_max_length, max_conversation_len=cfg.data.conversation_max_length)
+        train_collator = IFTCollator(tokenizer, cfg.data.context_max_length, cfg.data.conversation_max_length, cfg=cfg)
+        val_collator = IFTCollator(tokenizer, cfg.data.context_max_length, cfg.data.conversation_max_length, cfg=cfg)
     else:
         raise ValueError(f"Unknown data source: {cfg.data.source}")
 
