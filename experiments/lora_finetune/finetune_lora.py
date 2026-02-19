@@ -9,8 +9,10 @@ Key functions:
   random_init_loradict      – same structure, A∼N(0,√scale), B=zeros (standard
                               LoRA "scratch" init; avoids dead-gradient of all-zeros).
   zero_init_loradict        – alias for random_init_loradict (kept for backwards compat).
+  build_clm_inputs          – build plain causal-LM input_ids / labels from raw text
+                              (no chat template; labels = input_ids shifted internally).
   build_recon_inputs        – build RECON-prompt input_ids / labels from raw text.
-  finetune_lora_on_evidence – run K Adam steps on the RECON LM loss; calls an optional
+  finetune_lora_on_evidence – run K Adam steps on the CLM/RECON LM loss; calls an optional
                               on_snapshot(step, loradict) callback at each eval step so
                               callers can evaluate+discard immediately without accumulating
                               all snapshots in memory.
@@ -115,6 +117,47 @@ def _count_loradict_params(loradict: Any) -> int:
     elif torch.is_tensor(loradict):
         total += loradict.numel()
     return total
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLM input / label construction (plain next-token prediction, no chat template)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_clm_inputs(
+    tokenizer,
+    evidence_text: str,
+    max_length: int,
+    device: torch.device,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Build (input_ids, labels, attention_mask) for a plain causal-LM loss on
+    the raw evidence text.  No chat template, no <RECON> prompt.
+
+    HuggingFace ForCausalLM shifts labels left by 1 internally, so passing
+    labels=input_ids means position i is supervised to predict token i+1.
+    Every non-padding position is supervised (no -100 masking needed).
+
+    Returns:
+        input_ids      : [1, seq_len]
+        labels         : [1, seq_len]  (= input_ids; model handles the shift)
+        attention_mask : [1, seq_len]
+    """
+    enc = tokenizer(
+        evidence_text,
+        return_tensors="pt",
+        max_length=max_length,
+        truncation=True,
+    )
+    input_ids      = enc["input_ids"].to(device)       # [1, seq_len]
+    attention_mask = enc["attention_mask"].to(device)  # [1, seq_len]
+    labels         = input_ids.clone()
+
+    supervised_tokens = attention_mask.sum().item()
+    logger.debug(
+        f"build_clm_inputs: seq_len={input_ids.shape[1]}, "
+        f"supervised_tokens={supervised_tokens}"
+    )
+    return input_ids, labels, attention_mask
 
 
 # ─────────────────────────────────────────────────────────────────────────────

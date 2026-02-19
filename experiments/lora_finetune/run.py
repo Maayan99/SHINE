@@ -63,6 +63,7 @@ from test import extract_think_and_answer, compute_sample_f1
 from finetune_lora import (
     clone_loradict_to_params,
     zero_init_loradict,
+    build_clm_inputs,
     build_recon_inputs,
     finetune_lora_on_evidence,
 )
@@ -463,18 +464,26 @@ def main(cfg: DictConfig):
             f"question='{question[:100]}', ground_truth='{str(ground_truth)[:80]}'"
         )
 
-        # ── build RECON supervision sequence ─────────────────────────────────
-        logger.info(f"[sample {sample_idx}] Building RECON inputs ({recon_mode})...")
-        recon_input_ids, recon_labels, recon_mask = build_recon_inputs(
-            tokenizer=tokenizer,
-            evidence_text=evidence_text,
-            recon_context_max_length=int(cfg.lora_finetune.recon_context_max_length),
-            recon_conversation_max_length=int(cfg.lora_finetune.recon_conversation_max_length),
-            device=device,
-        )
+        # ── build fine-tuning supervision sequence ────────────────────────────
+        logger.info(f"[sample {sample_idx}] Building inputs (recon_mode={recon_mode})...")
+        if recon_mode == "clm":
+            recon_input_ids, recon_labels, recon_mask = build_clm_inputs(
+                tokenizer=tokenizer,
+                evidence_text=evidence_text,
+                max_length=int(cfg.lora_finetune.recon_context_max_length),
+                device=device,
+            )
+        else:
+            recon_input_ids, recon_labels, recon_mask = build_recon_inputs(
+                tokenizer=tokenizer,
+                evidence_text=evidence_text,
+                recon_context_max_length=int(cfg.lora_finetune.recon_context_max_length),
+                recon_conversation_max_length=int(cfg.lora_finetune.recon_conversation_max_length),
+                device=device,
+            )
         supervised_count = (recon_labels[0] != -100).sum().item()
         logger.info(
-            f"[sample {sample_idx}] RECON seq_len={recon_input_ids.shape[1]}, "
+            f"[sample {sample_idx}] seq_len={recon_input_ids.shape[1]}, "
             f"supervised_tokens={supervised_count}"
         )
         if supervised_count == 0:

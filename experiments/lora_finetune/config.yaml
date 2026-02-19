@@ -84,12 +84,12 @@ optim:
 # New section: controls the fine-tuning experiment
 # ─────────────────────────────────────────────────────────────────────────────
 lora_finetune:
-  lr: 0.0001                         # Adam lr for LoRA tensor optimization (0.001 overshoots)
-  eval_at: [0, 1, 3, 5, 10, 20, 50] # gradient steps at which to snapshot + evaluate
-  num_samples: 200                   # how many test samples to run; -1 = full split
-  recon_mode: "recon"                # "recon" (full evidence) | "comp" (first-half → full)
-  recon_context_max_length: 1300     # max tokens for the RECON evidence sequence
-  recon_conversation_max_length: 1600 # max tokens for full RECON label (1300 evidence + ~300 overhead)
+  lr: 0.00001                        # Adam lr — 1e-5; conservative for CLM to avoid disturbing QA basin
+  eval_at: [0, 1, 2, 3, 5, 10]      # finer granularity in early steps where changes are largest
+  num_samples: 20                    # start small to validate before full 200-sample run
+  recon_mode: "clm"                  # "clm" (plain next-token) | "recon" (chat-template reconstruction)
+  recon_context_max_length: 1300     # max tokens for evidence (used by both clm and recon)
+  recon_conversation_max_length: 1600 # max tokens for full RECON label (recon mode only)
   out_dir: "experiments/lora_finetune/results/${name}/${test.source}"
 
 hidden_size: -1
