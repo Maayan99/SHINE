@@ -581,11 +581,11 @@ def main(cfg: DictConfig):
     no_decay = ["bias", "LayerNorm.weight", "layer_norm.weight", "norm.weight", "norm1", "norm2"]
     grouped_params = [
         {
-            "params": [p for n, p in ddp_metanet.named_parameters() if (not any(nd in n for nd in no_decay) and not n.startswith("module.metamodel"))],
+            "params": [p for n, p in ddp_metanet.named_parameters() if (not any(nd in n for nd in no_decay) and not (n.startswith("module.metamodel") or n.startswith("metamodel.")))],
             "weight_decay": cfg.optim.weight_decay,
         },
         {
-            "params": [p for n, p in ddp_metanet.named_parameters() if (any(nd in n for nd in no_decay) and not n.startswith("module.metamodel"))],
+            "params": [p for n, p in ddp_metanet.named_parameters() if (any(nd in n for nd in no_decay) and not (n.startswith("module.metamodel") or n.startswith("metamodel.")))],
             "weight_decay": 0.0,
         },
         {
