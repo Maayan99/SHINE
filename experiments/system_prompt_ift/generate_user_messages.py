@@ -73,7 +73,7 @@ def generate_messages(client: anthropic.Anthropic, system_prompt: str, n: int = 
 
 def main():
     parser = argparse.ArgumentParser(description="Step 1.2: Generate user messages per system prompt")
-    parser.add_argument("--input", default="data/raw/system_prompts.jsonl")
+    parser.add_argument("--input", default="data/raw/system_prompts_clean.jsonl")
     parser.add_argument("--output", default="data/with_messages.jsonl")
     parser.add_argument("--messages-per-prompt", type=int, default=10)
     parser.add_argument("--resume", action="store_true", help="Skip prompts already in output file")
