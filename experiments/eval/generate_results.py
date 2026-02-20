@@ -24,6 +24,12 @@ from datetime import datetime
 from typing import Dict, List, Tuple, Any, Optional
 from collections import defaultdict
 
+# Add project root to path so imports work when invoked as
+# ``python experiments/eval/generate_results.py`` from the repo root.
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 import torch
 from tqdm import tqdm
 from transformers import AutoTokenizer
