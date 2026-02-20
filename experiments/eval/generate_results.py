@@ -69,11 +69,6 @@ def extract_think_and_answer(text: str) -> Tuple[str, str]:
     if not has_start and not has_end:
         answer = text.strip()
         answer = re.sub(r"^(final answer|answer)\s*:\s*", "", answer, flags=re.IGNORECASE).strip()
-        if "\n" in answer:
-            for line in answer.splitlines():
-                if line.strip():
-                    answer = line.strip()
-                    break
         return "", answer
 
     start = lower.find("<think>")
@@ -85,11 +80,6 @@ def extract_think_and_answer(text: str) -> Tuple[str, str]:
     think = text[start + len("<think>"): end].strip()
     answer = text[end + len("</think>"):].strip()
     answer = re.sub(r"^(final answer|answer)\s*:\s*", "", answer, flags=re.IGNORECASE).strip()
-    if "\n" in answer:
-        for line in answer.splitlines():
-            if line.strip():
-                answer = line.strip()
-                break
 
     return think, answer
 
