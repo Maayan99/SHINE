@@ -298,7 +298,7 @@ def run_only_question(metanetwork, tokenizer, grouped_data, device, cfg):
     for sp_id, entries in tqdm(grouped_data.items(), desc="Only-Question"):
         results[sp_id] = {}
         for entry in entries:
-            messages = [{"role": "user", "content": entry["user_message"]}]
+            messages = [{"role": "user", "content": entry["user_message"] + "\n/no_think"}]
             try:
                 answer = generate_response(
                     metanetwork.metamodel, tokenizer, messages, device,
@@ -328,7 +328,7 @@ def run_in_context(metanetwork, tokenizer, grouped_data, device, cfg):
         for entry in entries:
             messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": entry["user_message"]},
+                {"role": "user", "content": entry["user_message"] + "\n/no_think"},
             ]
             try:
                 answer = generate_response(
@@ -373,7 +373,7 @@ def run_shine(metanetwork, metalora, tokenizer, grouped_data, device, cfg,
 
         results[sp_id] = {}
         for entry in entries:
-            messages = [{"role": "user", "content": entry["user_message"]}]
+            messages = [{"role": "user", "content": entry["user_message"] + "\n/no_think"}]
             try:
                 answer = generate_response(
                     metanetwork.metamodel, tokenizer, messages, device,
